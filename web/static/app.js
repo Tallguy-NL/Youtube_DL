@@ -1,0 +1,293 @@
+(function () {
+  "use strict";
+
+  const searchForm = document.getElementById("search-form");
+  const searchBtn = document.getElementById("search-btn");
+  const searchStatus = document.getElementById("search-status");
+  const resultsCard = document.getElementById("results-card");
+  const resultsBody = document.getElementById("results-body");
+  const selectAll = document.getElementById("select-all");
+  const selectionCount = document.getElementById("selection-count");
+  const exportBtn = document.getElementById("export-btn");
+  const filterRadios = document.querySelectorAll('input[name="filter"]');
+
+  const filterTitle = document.getElementById("filter-title");
+  const filterDateFrom = document.getElementById("filter-date-from");
+  const filterDateTo = document.getElementById("filter-date-to");
+  const filterUploader = document.getElementById("filter-uploader");
+  const filterDurationMin = document.getElementById("filter-duration-min");
+  const filterDurationMax = document.getElementById("filter-duration-max");
+  const filterQuality = document.getElementById("filter-quality");
+  const filterResetBtn = document.getElementById("filter-reset-btn");
+
+  let currentResults = [];
+
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str == null ? "" : String(str);
+    return div.innerHTML;
+  }
+
+  function currentFilter() {
+    const checked = document.querySelector('input[name="filter"]:checked');
+    return checked ? checked.value : "alle";
+  }
+
+  function visibleRows() {
+    return Array.from(resultsBody.querySelectorAll("tr"));
+  }
+
+  function matchesFilters(item) {
+    const titleQuery = filterTitle.value.trim().toLowerCase();
+    if (titleQuery && !(item.title || "").toLowerCase().includes(titleQuery)) {
+      return false;
+    }
+
+    const uploaderQuery = filterUploader.value.trim().toLowerCase();
+    if (uploaderQuery && !(item.uploader || "").toLowerCase().includes(uploaderQuery)) {
+      return false;
+    }
+
+    const dateFrom = filterDateFrom.value;
+    if (dateFrom && (!item.upload_date || item.upload_date < dateFrom)) {
+      return false;
+    }
+    const dateTo = filterDateTo.value;
+    if (dateTo && (!item.upload_date || item.upload_date > dateTo)) {
+      return false;
+    }
+
+    const durationMin = filterDurationMin.value;
+    if (durationMin !== "" && (item.duration_minutes == null || item.duration_minutes < Number(durationMin))) {
+      return false;
+    }
+    const durationMax = filterDurationMax.value;
+    if (durationMax !== "" && (item.duration_minutes == null || item.duration_minutes > Number(durationMax))) {
+      return false;
+    }
+
+    const quality = filterQuality.value;
+    if (quality && item.quality !== quality) {
+      return false;
+    }
+
+    return true;
+  }
+
+  function applyFilter() {
+    const filter = currentFilter();
+    visibleRows().forEach((row) => {
+      const item = currentResults[Number(row.dataset.index)];
+      const alreadyExported = row.dataset.alreadyExported === "true";
+      const shouldHide =
+        (filter === "niet_geexporteerd" && alreadyExported) || !matchesFilters(item);
+      row.hidden = shouldHide;
+      if (shouldHide) {
+        row.querySelector('input[type="checkbox"]').checked = false;
+      }
+    });
+    updateSelectionCount();
+  }
+
+  function populateQualityOptions(results) {
+    const qualities = Array.from(new Set(results.map((r) => r.quality).filter(Boolean)));
+    qualities.sort((a, b) => (parseInt(b, 10) || 0) - (parseInt(a, 10) || 0));
+
+    filterQuality.innerHTML = '<option value="">Alle</option>';
+    qualities.forEach((q) => {
+      const option = document.createElement("option");
+      option.value = q;
+      option.textContent = q;
+      filterQuality.appendChild(option);
+    });
+  }
+
+  function resetFilters() {
+    filterTitle.value = "";
+    filterDateFrom.value = "";
+    filterDateTo.value = "";
+    filterUploader.value = "";
+    filterDurationMin.value = "";
+    filterDurationMax.value = "";
+    filterQuality.value = "";
+    applyFilter();
+  }
+
+  function updateSelectionCount() {
+    const checked = resultsBody.querySelectorAll('input[type="checkbox"]:checked');
+    selectionCount.textContent = checked.length
+      ? `${checked.length} geselecteerd`
+      : "";
+    exportBtn.disabled = checked.length === 0;
+
+    const visible = visibleRows().filter((r) => !r.hidden);
+    const visibleChecked = visible.filter((r) =>
+      r.querySelector('input[type="checkbox"]').checked
+    );
+    selectAll.checked = visible.length > 0 && visibleChecked.length === visible.length;
+    selectAll.indeterminate =
+      visibleChecked.length > 0 && visibleChecked.length < visible.length;
+  }
+
+  function renderResults(results) {
+    currentResults = results;
+    resultsBody.innerHTML = "";
+
+    results.forEach((item, index) => {
+      const row = document.createElement("tr");
+      row.dataset.index = String(index);
+      row.dataset.alreadyExported = item.already_exported ? "true" : "false";
+
+      const statusBadge = item.already_exported
+        ? '<span class="badge">eerder geëxporteerd</span>'
+        : '<span class="badge badge-muted">nieuw</span>';
+
+      row.innerHTML = `
+        <td class="col-check"><input type="checkbox" class="row-check"></td>
+        <td class="title-cell">${escapeHtml(item.title)}</td>
+        <td>${escapeHtml(item.upload_date || "-")}</td>
+        <td>${escapeHtml(item.uploader || "-")}</td>
+        <td>${item.duration_minutes != null ? item.duration_minutes : "-"}</td>
+        <td>${escapeHtml(item.quality || "-")}</td>
+        <td><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener">${escapeHtml(item.url)}</a></td>
+        <td>${statusBadge}</td>
+      `;
+
+      resultsBody.appendChild(row);
+    });
+
+    resultsCard.hidden = results.length === 0 && searchStatus.textContent === "";
+    resultsCard.hidden = false;
+    selectAll.checked = false;
+    populateQualityOptions(results);
+    resetFilters();
+  }
+
+  searchForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const query = document.getElementById("query").value.trim();
+    const maxResults = document.getElementById("max_results").value;
+    const minDuration = document.getElementById("min_duration").value;
+
+    if (!query) return;
+
+    searchBtn.disabled = true;
+    searchStatus.textContent = "Bezig met zoeken op YouTube...";
+    searchStatus.classList.remove("error");
+
+    try {
+      const resp = await fetch("/api/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query,
+          max_results: maxResults ? Number(maxResults) : 20,
+          min_duration_minutes: minDuration ? Number(minDuration) : null,
+        }),
+      });
+
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        throw new Error(data.error || "Onbekende fout");
+      }
+
+      renderResults(data.results);
+      searchStatus.textContent = data.results.length
+        ? `${data.results.length} resultaten gevonden.`
+        : "Geen resultaten gevonden die aan de criteria voldoen.";
+    } catch (err) {
+      searchStatus.textContent = err.message;
+      searchStatus.classList.add("error");
+      resultsCard.hidden = true;
+    } finally {
+      searchBtn.disabled = false;
+    }
+  });
+
+  resultsBody.addEventListener("change", (e) => {
+    if (e.target.classList.contains("row-check")) {
+      updateSelectionCount();
+    }
+  });
+
+  selectAll.addEventListener("change", () => {
+    const checked = selectAll.checked;
+    visibleRows()
+      .filter((r) => !r.hidden)
+      .forEach((row) => {
+        row.querySelector('input[type="checkbox"]').checked = checked;
+      });
+    updateSelectionCount();
+  });
+
+  filterRadios.forEach((radio) => radio.addEventListener("change", applyFilter));
+
+  [filterTitle, filterUploader].forEach((el) => el.addEventListener("input", applyFilter));
+  [filterDateFrom, filterDateTo, filterDurationMin, filterDurationMax, filterQuality].forEach((el) =>
+    el.addEventListener("change", applyFilter)
+  );
+  filterResetBtn.addEventListener("click", resetFilters);
+
+  exportBtn.addEventListener("click", async () => {
+    const selectedItems = [];
+    visibleRows().forEach((row) => {
+      const checkbox = row.querySelector('input[type="checkbox"]');
+      if (checkbox.checked) {
+        selectedItems.push(currentResults[Number(row.dataset.index)]);
+      }
+    });
+
+    if (selectedItems.length === 0) return;
+
+    exportBtn.disabled = true;
+
+    try {
+      // 1. Server-side JSON export-geschiedenis bijwerken
+      const resp = await fetch("/api/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: selectedItems }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(data.error || "Export mislukt");
+      }
+
+      // 2. Client-side .txt bestand met URL's genereren en downloaden
+      const urlsText = selectedItems.map((item) => item.url).join("\n");
+      const blob = new Blob([urlsText], { type: "text/plain" });
+      const link = document.createElement("a");
+      const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      link.href = URL.createObjectURL(blob);
+      link.download = `youtube-urls-${timestamp}.txt`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(link.href);
+
+      // 3. Rijen in de UI meteen markeren als geëxporteerd
+      selectedItems.forEach((item) => {
+        item.already_exported = true;
+      });
+      visibleRows().forEach((row) => {
+        const checkbox = row.querySelector('input[type="checkbox"]');
+        if (checkbox.checked) {
+          row.dataset.alreadyExported = "true";
+          const statusCell = row.children[row.children.length - 1];
+          statusCell.innerHTML = '<span class="badge">eerder geëxporteerd</span>';
+        }
+      });
+
+      searchStatus.classList.remove("error");
+      searchStatus.textContent = `${selectedItems.length} URL('s) geëxporteerd.`;
+      applyFilter();
+    } catch (err) {
+      searchStatus.classList.add("error");
+      searchStatus.textContent = err.message;
+    } finally {
+      exportBtn.disabled = false;
+    }
+  });
+})();
