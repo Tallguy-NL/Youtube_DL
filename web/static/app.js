@@ -170,6 +170,8 @@
     const query = document.getElementById("query").value.trim();
     const maxResults = document.getElementById("max_results").value;
     const minDuration = document.getElementById("min_duration").value;
+    const excludeExported =
+      document.querySelector('input[name="exclude_exported"]:checked').value === "uitsluiten";
 
     if (!query) return;
 
@@ -186,6 +188,7 @@
           query,
           max_results: maxResults ? Number(maxResults) : 20,
           min_duration_minutes: minDuration ? Number(minDuration) : null,
+          exclude_exported: excludeExported,
         }),
       });
 

@@ -94,6 +94,7 @@ html, body {
   font-weight: 500;
 }
 .field-grow { flex: 1 1 320px; }
+.field-grow-min { flex: 0 0 auto; }
 .field-small { flex: 0 1 160px; }
 .field-btn { flex: 0 0 auto; }
 

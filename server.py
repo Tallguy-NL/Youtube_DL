@@ -95,13 +95,18 @@ def _extract_full(url):
         return None
 
 
-def search_youtube(query, max_results, min_duration_minutes=None):
+def search_youtube(query, max_results, min_duration_minutes=None, exclude_exported=False):
     # Stap 1: goedkope "flat" zoekopdracht (1 request) geeft al duur, titel en
-    # uploader terug, zodat we op lengte kunnen filteren zonder elke video
-    # individueel te bevragen. Er wordt een kleine buffer bovenop max_results
-    # opgevraagd zodat er nog marge is als een deel van de video's inmiddels
-    # niet meer beschikbaar blijkt te zijn.
-    fetch_count = min(max_results * 5, 200) if min_duration_minutes else min(max_results + 10, 200)
+    # uploader terug, zodat we op lengte (en op al-geëxporteerd) kunnen
+    # filteren zonder elke video individueel te bevragen. Er wordt een buffer
+    # bovenop max_results opgevraagd zodat er nog marge is als een deel wordt
+    # weggefilterd of inmiddels niet meer beschikbaar blijkt te zijn. Deze
+    # filtering gebeurt VOORDAT we tot max_results beperken, zodat je bij
+    # "uitsluiten geëxporteerd" ook echt max_results NIEUWE clips terugkrijgt.
+    needs_buffer = bool(min_duration_minutes) or exclude_exported
+    fetch_count = min(max_results * 5, 200) if needs_buffer else min(max_results + 10, 200)
+
+    already_exported = exported_video_ids() if exclude_exported else set()
 
     flat_opts = {"quiet": True, "no_warnings": True, "extract_flat": True, "skip_download": True}
     with YoutubeDL(flat_opts) as ydl:
@@ -110,6 +115,8 @@ def search_youtube(query, max_results, min_duration_minutes=None):
     candidates = []
     for entry in flat_info.get("entries") or []:
         if entry is None:
+            continue
+        if exclude_exported and entry.get("id") in already_exported:
             continue
         duration_minutes = format_duration_minutes(entry.get("duration"))
         if min_duration_minutes and (duration_minutes is None or duration_minutes < min_duration_minutes):
@@ -187,8 +194,10 @@ def api_search():
     except (TypeError, ValueError):
         min_duration_minutes = None
 
+    exclude_exported = bool(data.get("exclude_exported"))
+
     try:
-        results = search_youtube(query, max_results, min_duration_minutes)
+        results = search_youtube(query, max_results, min_duration_minutes, exclude_exported)
     except Exception as exc:
         return jsonify({"error": f"Zoeken mislukt: {exc}"}), 500
 

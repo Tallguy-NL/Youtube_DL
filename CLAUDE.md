@@ -27,18 +27,28 @@ geserveerd via `send_from_directory`.
 ## Backend (`server.py`)
 
 - `GET /` en `GET /static/<file>` — serveren de frontend.
-- `POST /api/search` — body `{query, max_results, min_duration_minutes}`.
+- `POST /api/search` — body `{query, max_results, min_duration_minutes, exclude_exported}`.
   1. Doet eerst een **flat** yt-dlp zoekopdracht (`ytsearchN:query`,
      `extract_flat=True`). Dit is één goedkope HTTP-call en levert al titel,
-     kanaal/uploader en duur op — genoeg om direct op minimale lengte te filteren
-     zonder dure per-video calls.
-  2. Voert daarna **volledige** yt-dlp-extractie uit (nodig voor `formats`/kwaliteit
-     en de exacte uploaddatum), maar alléén voor de kandidaten die de duurfilter
-     doorstaan, en maximaal `max_results + 5` stuks. Dit gebeurt parallel via een
-     `ThreadPoolExecutor` (8 workers) omdat het I/O-bound netwerkcalls zijn.
-  3. "Kwaliteit" = hoogste beschikbare resolutie uit `formats` (bv. `"1080p"`).
-  4. Markeert elk resultaat met `already_exported` door `video_id` te vergelijken
-     met alle eerder opgeslagen exports in `data/exports.json`.
+     kanaal/uploader en duur op — genoeg om direct op minimale lengte (en, als
+     `exclude_exported` aanstaat, op al-geëxporteerd) te filteren zonder dure
+     per-video calls.
+  2. Deze filtering gebeurt **vóórdat** de resultatenlijst tot `max_results`
+     wordt beperkt. Dat is bewust: met `exclude_exported=true` wil je bv. bij
+     "volgende 20" ook echt 20 nieuwe clips terugkrijgen, niet 20 resultaten
+     waarvan er een deel al eerder geëxporteerd bleek te zijn en wegvalt.
+  3. Voert daarna **volledige** yt-dlp-extractie uit (nodig voor `formats`/kwaliteit
+     en de exacte uploaddatum), maar alléén voor de kandidaten die de filters
+     doorstaan, in batches van `max_results + 5`. Dit gebeurt parallel via een
+     `ThreadPoolExecutor` (8 workers) omdat het I/O-bound netwerkcalls zijn, en
+     mislukte extracties (video inmiddels verwijderd/privé/regio-geblokkeerd)
+     worden overgeslagen in plaats van de hele zoekopdracht te laten falen.
+  4. "Kwaliteit" = hoogste beschikbare resolutie uit `formats` (bv. `"1080p"`).
+  5. Markeert elk resultaat met `already_exported` door `video_id` te vergelijken
+     met alle eerder opgeslagen exports in `data/exports.json` — ook als
+     `exclude_exported` aanstond (dan zijn ze allemaal `false`, want al
+     weggefilterd), zodat de client-side "niet geëxporteerd"-toggle en badges
+     blijven werken voor een zoekopdracht zonder die uitsluiting.
 
   Deze tweetraps-aanpak (flat filteren → gericht volledig extraheren) is een
   bewuste keuze: alles in één keer volledig extraheren (zoals de eerste versie

@@ -28,6 +28,19 @@
         <label for="min_duration">Min. lengte (min)</label>
         <input type="number" id="min_duration" name="min_duration" min="0" step="0.5" placeholder="geen">
       </div>
+      <div class="field field-grow-min">
+        <label>&nbsp;</label>
+        <div class="radio-group">
+          <label class="radio-label">
+            <input type="radio" name="exclude_exported" value="alle" checked>
+            Alle resultaten
+          </label>
+          <label class="radio-label">
+            <input type="radio" name="exclude_exported" value="uitsluiten">
+            Uitsluiten geëxporteerd
+          </label>
+        </div>
+      </div>
       <div class="field field-btn">
         <button type="submit" class="btn btn-solid" id="search-btn">Zoeken</button>
       </div>
