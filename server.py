@@ -1,12 +1,15 @@
 import json
 import os
 import re
+import shutil
+import tempfile
 import threading
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_file, send_from_directory
 from yt_dlp import YoutubeDL
 
 _AMS = ZoneInfo("Europe/Amsterdam")
@@ -162,6 +165,37 @@ def search_youtube(query, max_results, min_duration_minutes=None, exclude_export
 
 
 # =====================================================================================
+# Downloaden (H.264, beste beschikbare kwaliteit — geen transcodering)
+# =====================================================================================
+
+# YouTube levert vaak alleen hogere resoluties (>1080p) in VP9/AV1 aan, niet in
+# H.264/avc1. Deze format-string pakt de beste beschikbare H.264-videotrack +
+# beste audio, en valt terug op de beste H.264-combinatie of anders gewoon de
+# beste beschikbare stream als er geen H.264 aanwezig is.
+H264_FORMAT = "bestvideo[vcodec^=avc1]+bestaudio[ext=m4a]/best[vcodec^=avc1]/best"
+
+
+def _download_video(url, dest_dir):
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "format": H264_FORMAT,
+        "merge_output_format": "mp4",
+        "outtmpl": os.path.join(dest_dir, "%(title).150B [%(id)s].%(ext)s"),
+    }
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        filename = ydl.prepare_filename(info)
+        if not os.path.exists(filename):
+            # video+audio zijn gemerged; de extensie is dan veranderd naar mp4
+            base, _ = os.path.splitext(filename)
+            merged = base + ".mp4"
+            if os.path.exists(merged):
+                filename = merged
+        return filename
+
+
+# =====================================================================================
 # Routes
 # =====================================================================================
 
@@ -237,7 +271,76 @@ def api_export():
     return jsonify({"exported_count": len(items), "exported_at": exported_at})
 
 
+@app.route("/api/download", methods=["POST"])
+def api_download():
+    data = request.get_json(force=True) or {}
+    url = (data.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "URL is verplicht"}), 400
+
+    tmp_dir = tempfile.mkdtemp(prefix="ytdl_")
+    try:
+        filepath = _download_video(url, tmp_dir)
+    except Exception as exc:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return jsonify({"error": f"Download mislukt: {exc}"}), 500
+
+    response = send_file(filepath, as_attachment=True, download_name=os.path.basename(filepath))
+    response.call_on_close(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
+    return response
+
+
+@app.route("/api/download/bulk", methods=["POST"])
+def api_download_bulk():
+    data = request.get_json(force=True) or {}
+    urls = [u.strip() for u in (data.get("urls") or []) if u and u.strip()]
+    if not urls:
+        return jsonify({"error": "Geen URL's opgegeven"}), 400
+
+    tmp_dir = tempfile.mkdtemp(prefix="ytdl_bulk_")
+
+    def _safe_download(video_url):
+        video_dir = tempfile.mkdtemp(dir=tmp_dir)
+        try:
+            return _download_video(video_url, video_dir)
+        except Exception:
+            return None
+
+    downloaded = []
+    failed = 0
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        for path in pool.map(_safe_download, urls):
+            if path:
+                downloaded.append(path)
+            else:
+                failed += 1
+
+    if not downloaded:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return jsonify({"error": "Geen van de video's kon gedownload worden"}), 500
+
+    zip_path = os.path.join(tmp_dir, "youtube-clips.zip")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as zf:
+        used_names = set()
+        for path in downloaded:
+            name = os.path.basename(path)
+            unique_name = name
+            i = 1
+            while unique_name in used_names:
+                base, ext = os.path.splitext(name)
+                unique_name = f"{base} ({i}){ext}"
+                i += 1
+            used_names.add(unique_name)
+            zf.write(path, arcname=unique_name)
+
+    response = send_file(zip_path, as_attachment=True, download_name="youtube-clips.zip")
+    response.headers["X-Downloaded-Count"] = str(len(downloaded))
+    response.headers["X-Failed-Count"] = str(failed)
+    response.call_on_close(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
+    return response
+
+
 if __name__ == "__main__":
     debug_mode = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
     port = int(os.environ.get("PORT", 5001))
-    app.run(host="0.0.0.0", port=port, debug=debug_mode)
+    app.run(host="0.0.0.0", port=port, debug=debug_mode, threaded=True)

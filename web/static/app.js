@@ -11,6 +11,10 @@
   const selectAll = document.getElementById("select-all");
   const selectionCount = document.getElementById("selection-count");
   const exportBtn = document.getElementById("export-btn");
+  const downloadZipBtn = document.getElementById("download-zip-btn");
+  const downloadStatus = document.getElementById("download-status");
+  const downloadStatusText = document.getElementById("download-status-text");
+  const downloadSpinner = document.getElementById("download-spinner");
   const filterRadios = document.querySelectorAll('input[name="filter"]');
 
   const filterTitle = document.getElementById("filter-title");
@@ -125,6 +129,7 @@
       ? `${checked.length} geselecteerd`
       : "";
     exportBtn.disabled = checked.length === 0;
+    downloadZipBtn.disabled = checked.length === 0;
 
     const visible = visibleRows().filter((r) => !r.hidden);
     const visibleChecked = visible.filter((r) =>
@@ -156,7 +161,10 @@
         <td>${item.duration_minutes != null ? item.duration_minutes : "-"}</td>
         <td>${escapeHtml(item.quality || "-")}</td>
         <td><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener">${escapeHtml(item.url)}</a></td>
-        <td>${statusBadge}</td>
+        <td class="status-cell">${statusBadge}</td>
+        <td>
+          <button type="button" class="btn btn-outline btn-tiny row-download-btn">Download</button>
+        </td>
       `;
 
       resultsBody.appendChild(row);
@@ -285,7 +293,7 @@
         const checkbox = row.querySelector('input[type="checkbox"]');
         if (checkbox.checked) {
           row.dataset.alreadyExported = "true";
-          const statusCell = row.children[row.children.length - 1];
+          const statusCell = row.querySelector(".status-cell");
           statusCell.innerHTML = '<span class="badge">eerder geëxporteerd</span>';
         }
       });
@@ -298,6 +306,102 @@
       searchStatusText.textContent = err.message;
     } finally {
       exportBtn.disabled = false;
+    }
+  });
+
+  function sanitizeFilename(name) {
+    return (name || "clip").replace(/[\\/:*?"<>|]/g, "_").trim() || "clip";
+  }
+
+  function triggerBlobDownload(blob, filename) {
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+  }
+
+  resultsBody.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".row-download-btn");
+    if (!btn) return;
+
+    const row = btn.closest("tr");
+    const item = currentResults[Number(row.dataset.index)];
+    const originalText = btn.textContent;
+
+    btn.disabled = true;
+    btn.textContent = "Bezig...";
+
+    try {
+      const resp = await fetch("/api/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: item.url }),
+      });
+
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.error || "Download mislukt");
+      }
+
+      const blob = await resp.blob();
+      triggerBlobDownload(blob, `${sanitizeFilename(item.title)} [${item.video_id}].mp4`);
+    } catch (err) {
+      searchStatus.classList.add("error");
+      searchStatusText.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  });
+
+  downloadZipBtn.addEventListener("click", async () => {
+    const selectedItems = [];
+    visibleRows().forEach((row) => {
+      const checkbox = row.querySelector('input[type="checkbox"]');
+      if (checkbox.checked) {
+        selectedItems.push(currentResults[Number(row.dataset.index)]);
+      }
+    });
+
+    if (selectedItems.length === 0) return;
+
+    downloadZipBtn.disabled = true;
+    downloadSpinner.hidden = false;
+    downloadStatus.classList.remove("error");
+    downloadStatusText.textContent = `Bezig met downloaden van ${selectedItems.length} clip(s) in H.264 en inpakken als ZIP — dit kan enige tijd duren...`;
+
+    try {
+      const resp = await fetch("/api/download/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urls: selectedItems.map((item) => item.url) }),
+      });
+
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.error || "Download mislukt");
+      }
+
+      const downloadedCount = resp.headers.get("X-Downloaded-Count");
+      const failedCount = resp.headers.get("X-Failed-Count");
+
+      const blob = await resp.blob();
+      const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      triggerBlobDownload(blob, `youtube-clips-${timestamp}.zip`);
+
+      downloadStatusText.textContent =
+        failedCount && Number(failedCount) > 0
+          ? `${downloadedCount} clip(s) gedownload, ${failedCount} mislukt (niet meer beschikbaar).`
+          : `${downloadedCount} clip(s) gedownload en als ZIP opgeslagen.`;
+    } catch (err) {
+      downloadStatus.classList.add("error");
+      downloadStatusText.textContent = err.message;
+    } finally {
+      downloadZipBtn.disabled = false;
+      downloadSpinner.hidden = true;
     }
   });
 })();

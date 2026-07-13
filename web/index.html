@@ -71,9 +71,14 @@
       </div>
       <div class="toolbar-right">
         <span id="selection-count" class="selection-count"></span>
+        <button type="button" class="btn btn-outline" id="download-zip-btn">Download geselecteerde (ZIP)</button>
         <button type="button" class="btn btn-outline" id="export-btn">Bulk export URL's</button>
       </div>
     </div>
+    <p id="download-status" class="search-status">
+      <span class="spinner" id="download-spinner" hidden></span>
+      <span id="download-status-text"></span>
+    </p>
 
     <div class="filter-bar">
       <div class="field">
@@ -121,9 +126,10 @@
             <th>Datum</th>
             <th>Uploader</th>
             <th>Duur (min)</th>
-            <th>Kwaliteit</th>
+            <th title="H.264 (AVC), beste beschikbare kwaliteit - vaak maximaal 1080p omdat YouTube hogere resoluties meestal alleen in VP9/AV1 aanbiedt">Kwaliteit</th>
             <th>URL</th>
             <th>Status</th>
+            <th>Download</th>
           </tr>
         </thead>
         <tbody id="results-body"></tbody>

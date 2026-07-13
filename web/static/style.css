@@ -297,6 +297,13 @@ input[type="checkbox"], input[type="radio"] {
   color: var(--text-muted);
 }
 
+.btn-tiny {
+  padding: 5px 14px;
+  font-size: 12px;
+  border-radius: 100px;
+  white-space: nowrap;
+}
+
 /* === Misc === */
 [hidden] { display: none !important; }
 

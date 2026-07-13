@@ -61,6 +61,32 @@ geserveerd via `send_from_directory`.
   gededupliceerd, dus eenzelfde video kan meerdere exportregels hebben als hij
   vaker geëxporteerd wordt (geeft een volledige geschiedenis).
 
+- `POST /api/download` — body `{url}`. Downloadt één video via yt-dlp in
+  **H.264/AVC** (`H264_FORMAT` in `server.py`), gemuxt naar mp4, en stuurt het
+  bestand terug als attachment. Geen transcodering: YouTube levert dit codec
+  meestal al native, dus dit is puur downloaden + samenvoegen van de losse
+  video-/audiotrack (snel, `ffmpeg -c copy`). Hogere resoluties (>1080p) zijn op
+  YouTube vaak alleen in VP9/AV1 beschikbaar, dus de H.264-download kan lager
+  uitvallen dan de "kwaliteit" die in de resultatentabel getoond wordt (die
+  reflecteert de beste kwaliteit over alle codecs heen). Download gaat naar een
+  tijdelijke map (`tempfile.mkdtemp`) die na het versturen van de response
+  wordt opgeruimd via `response.call_on_close` (bewust niet `after_this_request`
+  — die callback vuurt af vóórdat het bestand daadwerkelijk naar de client is
+  gestreamd, wat het bestand voortijdig zou verwijderen).
+
+- `POST /api/download/bulk` — body `{urls: [...]}`. Download alle opgegeven
+  video's parallel (`ThreadPoolExecutor`, max 3 workers — beperkt om de
+  bandbreedte/CPU van de host niet te overbelasten), zipt de resultaten
+  (`ZIP_STORED`, geen compressie — video is al gecomprimeerd) en stuurt de zip
+  terug. Video's die niet meer beschikbaar zijn worden overgeslagen; het aantal
+  gelukt/mislukt komt terug in de `X-Downloaded-Count`/`X-Failed-Count`
+  response-headers zodat de UI dat kan tonen. Alleen als **alle** downloads
+  mislukken geeft de route een 500-foutmelding.
+
+`ffmpeg` is vereist (voor het muxen van losse video-/audiotracks) en zit in het
+Docker-image (`apt-get install ffmpeg` in de `Dockerfile`); lokaal via
+`brew install ffmpeg`.
+
 Geen YouTube API-key nodig: alle zoek- en metadata-ophaal gebeurt via yt-dlp
 (scraping), niet via de officiële YouTube Data API. Dat is kwetsbaarder voor
 wijzigingen aan YouTube's website dan een officiële API, maar heeft geen quota
@@ -90,6 +116,14 @@ en geeft rijkere metadata (exacte resolutie in plaats van enkel hd/sd).
      start de download in de browser.
   Na afloop worden de betrokken rijen direct in de UI gemarkeerd als
   "eerder geëxporteerd", zonder dat de pagina opnieuw hoeft te zoeken.
+- Elke rij heeft een eigen "Download"-knop (`POST /api/download`) die het
+  bestand als blob ophaalt en client-side wegschrijft met een bestandsnaam
+  opgebouwd uit titel + video-id (dezelfde conventie als de server gebruikt,
+  maar hier client-side gereconstrueerd om header-parsing te vermijden).
+  "Download geselecteerde (ZIP)" in de toolbar doet hetzelfde voor alle
+  geselecteerde rijen ineens via `POST /api/download/bulk`, met een statusregel
+  die waarschuwt dat dit lang kan duren en die na afloop meldt hoeveel clips
+  gelukt/mislukt zijn.
 
 ## Draaien
 
