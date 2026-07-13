@@ -68,9 +68,13 @@
       return false;
     }
 
-    const quality = filterQuality.value;
-    if (quality && item.quality !== quality) {
-      return false;
+    const minQuality = filterQuality.value;
+    if (minQuality) {
+      const itemHeight = parseInt(item.quality, 10) || 0;
+      const minHeight = parseInt(minQuality, 10) || 0;
+      if (itemHeight < minHeight) {
+        return false;
+      }
     }
 
     return true;
