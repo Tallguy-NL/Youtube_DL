@@ -1,0 +1,17 @@
+services:
+  youtube_dl:
+    build: .
+    image: youtube_dl_youtube_dl:latest
+    container_name: youtube_dl
+    restart: unless-stopped
+    ports:
+      - "8090:5001"
+    environment:
+      - FLASK_DEBUG=false
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
