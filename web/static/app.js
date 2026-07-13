@@ -177,7 +177,7 @@
         <td>${escapeHtml(item.uploader || "-")}</td>
         <td>${item.duration_minutes != null ? item.duration_minutes : "-"}</td>
         <td>${escapeHtml(item.quality || "-")}</td>
-        <td><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener">${escapeHtml(item.url)}</a></td>
+        <td class="url-cell"><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener" title="${escapeHtml(item.url)}">${escapeHtml(item.url)}</a></td>
         <td class="status-cell">${statusBadge}</td>
         <td>
           <button type="button" class="btn btn-outline btn-tiny row-download-btn">Download</button>
