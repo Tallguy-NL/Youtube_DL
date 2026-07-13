@@ -86,15 +86,22 @@ def best_quality_label(entry):
 
 def _extract_full(url):
     opts = {"quiet": True, "no_warnings": True, "skip_download": True}
-    with YoutubeDL(opts) as ydl:
-        return ydl.extract_info(url, download=False)
+    try:
+        with YoutubeDL(opts) as ydl:
+            return ydl.extract_info(url, download=False)
+    except Exception:
+        # Video kan inmiddels verwijderd/privé/regio-geblokkeerd zijn; gewoon
+        # overslaan in plaats van de hele zoekopdracht te laten falen.
+        return None
 
 
 def search_youtube(query, max_results, min_duration_minutes=None):
     # Stap 1: goedkope "flat" zoekopdracht (1 request) geeft al duur, titel en
     # uploader terug, zodat we op lengte kunnen filteren zonder elke video
-    # individueel te bevragen.
-    fetch_count = min(max_results * 5, 200) if min_duration_minutes else max_results
+    # individueel te bevragen. Er wordt een kleine buffer bovenop max_results
+    # opgevraagd zodat er nog marge is als een deel van de video's inmiddels
+    # niet meer beschikbaar blijkt te zijn.
+    fetch_count = min(max_results * 5, 200) if min_duration_minutes else min(max_results + 10, 200)
 
     flat_opts = {"quiet": True, "no_warnings": True, "extract_flat": True, "skip_download": True}
     with YoutubeDL(flat_opts) as ydl:
@@ -109,15 +116,23 @@ def search_youtube(query, max_results, min_duration_minutes=None):
             continue
         candidates.append(entry)
 
-    # Stap 2: alleen voor de kandidaten die we ook echt nodig hebben (plus een
-    # kleine marge voor eventuele mislukte extracties) de volledige metadata
-    # (kwaliteit/formats, exacte uploaddatum) parallel ophalen.
-    to_extract = candidates[: max_results + 5]
-
+    # Stap 2: de volledige metadata (kwaliteit/formats, exacte uploaddatum)
+    # parallel ophalen, in batches, totdat we genoeg resultaten hebben of geen
+    # kandidaten meer over zijn. Zo vangen we onbeschikbare video's
+    # (verwijderd/privé/regio-geblokkeerd) op zonder de hele zoekopdracht te
+    # laten mislukken of vroegtijdig te weinig resultaten terug te geven.
     results = []
-    if to_extract:
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            for entry, full in zip(to_extract, pool.map(lambda e: _extract_full(e["url"]), to_extract)):
+    batch_size = max_results + 5
+    offset = 0
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        while len(results) < max_results and offset < len(candidates):
+            batch = candidates[offset : offset + batch_size]
+            offset += batch_size
+
+            for entry, full in zip(batch, pool.map(lambda e: _extract_full(e["url"]), batch)):
+                if len(results) >= max_results:
+                    break
                 if full is None:
                     continue
                 duration_minutes = format_duration_minutes(full.get("duration"))
