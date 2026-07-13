@@ -10,10 +10,11 @@ Zelfde opzet als de `padel`-app: een Flask-backend die een map met statische
 HTML/CSS/JS bedient, met data in platte JSON-bestanden op schijf (geen database).
 
 ```
-server.py              Flask app: routes + yt-dlp zoeklogica + export-opslag
+server.py              Flask app: routes + yt-dlp zoeklogica + export-/download-opslag
 requirements.txt        Flask, yt-dlp
 data/
   exports.json          Geschiedenis van alle geëxporteerde clips (append-only)
+  downloads.json         Geschiedenis van alle gedownloade clips (append-only)
 web/
   index.html             Paginastructuur (zoekformulier + resultatentabel)
   static/
@@ -27,16 +28,19 @@ geserveerd via `send_from_directory`.
 ## Backend (`server.py`)
 
 - `GET /` en `GET /static/<file>` — serveren de frontend.
-- `POST /api/search` — body `{query, max_results, min_duration_minutes, exclude_exported}`.
+- `POST /api/search` — body `{query, max_results, min_duration_minutes, exclude_exported, exclude_downloaded}`.
   1. Doet eerst een **flat** yt-dlp zoekopdracht (`ytsearchN:query`,
      `extract_flat=True`). Dit is één goedkope HTTP-call en levert al titel,
      kanaal/uploader en duur op — genoeg om direct op minimale lengte (en, als
-     `exclude_exported` aanstaat, op al-geëxporteerd) te filteren zonder dure
-     per-video calls.
+     `exclude_exported`/`exclude_downloaded` aanstaan, op al-geëxporteerd/
+     al-gedownload) te filteren zonder dure per-video calls. Beide uitsluitingen
+     zijn onafhankelijk te combineren (`excluded_ids` in `search_youtube()` is de
+     unie van beide sets als beide aanstaan).
   2. Deze filtering gebeurt **vóórdat** de resultatenlijst tot `max_results`
-     wordt beperkt. Dat is bewust: met `exclude_exported=true` wil je bv. bij
-     "volgende 20" ook echt 20 nieuwe clips terugkrijgen, niet 20 resultaten
-     waarvan er een deel al eerder geëxporteerd bleek te zijn en wegvalt.
+     wordt beperkt. Dat is bewust: met `exclude_exported`/`exclude_downloaded`
+     wil je bv. bij "volgende 20" ook echt 20 nieuwe clips terugkrijgen, niet 20
+     resultaten waarvan er een deel al eerder geëxporteerd/gedownload bleek te
+     zijn en wegvalt.
   3. Voert daarna **volledige** yt-dlp-extractie uit (nodig voor `formats`/kwaliteit
      en de exacte uploaddatum), maar alléén voor de kandidaten die de filters
      doorstaan, in batches van `max_results + 5`. Dit gebeurt parallel via een
@@ -44,11 +48,11 @@ geserveerd via `send_from_directory`.
      mislukte extracties (video inmiddels verwijderd/privé/regio-geblokkeerd)
      worden overgeslagen in plaats van de hele zoekopdracht te laten falen.
   4. "Kwaliteit" = hoogste beschikbare resolutie uit `formats` (bv. `"1080p"`).
-  5. Markeert elk resultaat met `already_exported` door `video_id` te vergelijken
-     met alle eerder opgeslagen exports in `data/exports.json` — ook als
-     `exclude_exported` aanstond (dan zijn ze allemaal `false`, want al
-     weggefilterd), zodat de client-side "niet geëxporteerd"-toggle en badges
-     blijven werken voor een zoekopdracht zonder die uitsluiting.
+  5. Markeert elk resultaat met `already_exported` en `already_downloaded` door
+     `video_id` te vergelijken met alle eerder opgeslagen exports/downloads —
+     ook als de bijbehorende uitsluiting aanstond (dan zijn ze allemaal `false`,
+     want al weggefilterd), zodat de client-side filters en badges blijven
+     werken voor een zoekopdracht zonder die uitsluiting.
 
   Deze tweetraps-aanpak (flat filteren → gericht volledig extraheren) is een
   bewuste keuze: alles in één keer volledig extraheren (zoals de eerste versie
@@ -72,16 +76,25 @@ geserveerd via `send_from_directory`.
   tijdelijke map (`tempfile.mkdtemp`) die na het versturen van de response
   wordt opgeruimd via `response.call_on_close` (bewust niet `after_this_request`
   — die callback vuurt af vóórdat het bestand daadwerkelijk naar de client is
-  gestreamd, wat het bestand voortijdig zou verwijderen).
+  gestreamd, wat het bestand voortijdig zou verwijderen). Na een geslaagde
+  download wordt de video geregistreerd in `data/downloads.json` (via
+  `record_downloads()` + `_info_to_record()`, die de al door yt-dlp opgehaalde
+  `info`-dict hergebruikt — geen extra request nodig).
 
 - `POST /api/download/bulk` — body `{urls: [...]}`. Download alle opgegeven
   video's parallel (`ThreadPoolExecutor`, max 3 workers — beperkt om de
-  bandbreedte/CPU van de host niet te overbelasten), zipt de resultaten
-  (`ZIP_STORED`, geen compressie — video is al gecomprimeerd) en stuurt de zip
-  terug. Video's die niet meer beschikbaar zijn worden overgeslagen; het aantal
-  gelukt/mislukt komt terug in de `X-Downloaded-Count`/`X-Failed-Count`
-  response-headers zodat de UI dat kan tonen. Alleen als **alle** downloads
-  mislukken geeft de route een 500-foutmelding.
+  bandbreedte/CPU van de host niet te overbelasten), registreert ze allemaal
+  (met dezelfde `downloaded_at`-timestamp) in `data/downloads.json`, zipt de
+  resultaten (`ZIP_STORED`, geen compressie — video is al gecomprimeerd) en
+  stuurt de zip terug. Video's die niet meer beschikbaar zijn worden
+  overgeslagen (en dus ook niet geregistreerd); het aantal gelukt/mislukt komt
+  terug in de `X-Downloaded-Count`/`X-Failed-Count` response-headers zodat de
+  UI dat kan tonen. Alleen als **alle** downloads mislukken geeft de route een
+  500-foutmelding.
+
+`data/downloads.json` heeft dezelfde rol voor downloads als `data/exports.json`
+voor exports: bron van waarheid voor "al eerder gedownload", gebruikt door
+zowel `exclude_downloaded` in `/api/search` als de `already_downloaded`-badge.
 
 `ffmpeg` is vereist (voor het muxen van losse video-/audiotracks) en zit in het
 Docker-image (`apt-get install ffmpeg` in de `Dockerfile`); lokaal via
@@ -97,17 +110,21 @@ en geeft rijkere metadata (exacte resolutie in plaats van enkel hd/sd).
 - Eén zoekformulier (zoekterm, aantal resultaten, minimale lengte in minuten) →
   `POST /api/search`, resultaten worden client-side in een tabel gerenderd.
 - Selectie: checkbox per rij + "Selecteer alles" (werkt alleen op de *zichtbare*
-  rijen, dus met filter "Niet geëxporteerd" actief selecteert het niet de
-  verborgen/al-geëxporteerde rijen).
-- Radiogroep "Alle" / "Niet geëxporteerd" filtert de tabel client-side op het
-  `already_exported`-veld — geen nieuwe serverroundtrip nodig.
+  rijen, dus met "Verberg geëxporteerde"/"Verberg gedownloade" actief selecteert
+  het niet de verborgen rijen).
+- Twee onafhankelijke checkboxes "Verberg geëxporteerde" / "Verberg gedownloade"
+  filteren de tabel client-side op de `already_exported`/`already_downloaded`-
+  velden (los combineerbaar, geen nieuwe serverroundtrip nodig) — niet te
+  verwarren met de gelijknamige checkboxes in het zoekformulier
+  (`exclude_exported`/`exclude_downloaded`), die vóór het zoeken al filteren
+  op de server (zie hierboven).
 - Filterbalk boven de tabel (titel, datum van/tot-en-met, uploader, duur
   vanaf/tot, kwaliteit) filtert eveneens volledig client-side op de al
   opgehaalde resultaten (`matchesFilters()` in `app.js`); de kwaliteit-dropdown
   wordt na elke zoekopdracht dynamisch gevuld met de kwaliteiten die in de
-  resultatenset voorkomen. Deze filters en de "niet geëxporteerd"-radio werken
-  samen (AND) om te bepalen welke rijen zichtbaar zijn; "Selecteer alles" en de
-  exportknop werken alleen op de zichtbare rijen.
+  resultatenset voorkomen. Deze filters en de verberg-checkboxes werken samen
+  (AND) om te bepalen welke rijen zichtbaar zijn; "Selecteer alles" en de
+  export-/downloadknoppen werken alleen op de zichtbare rijen.
 - "Bulk export URL's"-knop doet twee dingen bij klikken:
   1. `POST /api/export` met de geselecteerde items → persisteert de
      exportgeschiedenis server-side.
@@ -119,11 +136,16 @@ en geeft rijkere metadata (exacte resolutie in plaats van enkel hd/sd).
 - Elke rij heeft een eigen "Download"-knop (`POST /api/download`) die het
   bestand als blob ophaalt en client-side wegschrijft met een bestandsnaam
   opgebouwd uit titel + video-id (dezelfde conventie als de server gebruikt,
-  maar hier client-side gereconstrueerd om header-parsing te vermijden).
+  maar hier client-side gereconstrueerd om header-parsing te vermijden). Na een
+  geslaagde download wordt de rij direct als "eerder gedownload" gemarkeerd
+  (`buildStatusBadges()` toont geëxporteerd/gedownload-badges naast elkaar als
+  beide van toepassing zijn).
   "Download geselecteerde (ZIP)" in de toolbar doet hetzelfde voor alle
   geselecteerde rijen ineens via `POST /api/download/bulk`, met een statusregel
   die waarschuwt dat dit lang kan duren en die na afloop meldt hoeveel clips
-  gelukt/mislukt zijn.
+  gelukt/mislukt zijn (en markeert alle geselecteerde rijen als gedownload —
+  ook al kan een enkele individuele download binnen die batch mislukt zijn;
+  dat corrigeert zichzelf bij de volgende zoekopdracht).
 
 ## Draaien
 

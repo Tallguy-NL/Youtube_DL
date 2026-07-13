@@ -19,35 +19,67 @@ WEB_DIR = os.path.join(APP_ROOT, "web")
 STATIC_DIR = os.path.join(WEB_DIR, "static")
 DATA_DIR = os.path.join(APP_ROOT, "data")
 EXPORTS_FILE = os.path.join(DATA_DIR, "exports.json")
+DOWNLOADS_FILE = os.path.join(DATA_DIR, "downloads.json")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
 app = Flask(__name__, static_folder=None)
 
 _exports_lock = threading.Lock()
+_downloads_lock = threading.Lock()
 
 
 # =====================================================================================
-# Exports opslag
+# Exports/downloads opslag
 # =====================================================================================
 
-def load_exports():
-    if not os.path.exists(EXPORTS_FILE):
+def _load_json_list(path):
+    if not os.path.exists(path):
         return []
-    with open(EXPORTS_FILE, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8") as f:
         try:
             return json.load(f)
         except json.JSONDecodeError:
             return []
 
 
-def save_exports(entries):
-    with open(EXPORTS_FILE, "w", encoding="utf-8") as f:
+def _save_json_list(path, entries):
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(entries, f, ensure_ascii=False, indent=2)
+
+
+def load_exports():
+    return _load_json_list(EXPORTS_FILE)
+
+
+def save_exports(entries):
+    _save_json_list(EXPORTS_FILE, entries)
 
 
 def exported_video_ids():
     return {entry["video_id"] for entry in load_exports()}
+
+
+def load_downloads():
+    return _load_json_list(DOWNLOADS_FILE)
+
+
+def save_downloads(entries):
+    _save_json_list(DOWNLOADS_FILE, entries)
+
+
+def downloaded_video_ids():
+    return {entry["video_id"] for entry in load_downloads()}
+
+
+def record_downloads(records):
+    if not records:
+        return
+    downloaded_at = datetime.now(_AMS).isoformat()
+    with _downloads_lock:
+        entries = load_downloads()
+        entries.extend({**record, "downloaded_at": downloaded_at} for record in records)
+        save_downloads(entries)
 
 
 # =====================================================================================
@@ -98,18 +130,29 @@ def _extract_full(url):
         return None
 
 
-def search_youtube(query, max_results, min_duration_minutes=None, exclude_exported=False):
+def search_youtube(
+    query,
+    max_results,
+    min_duration_minutes=None,
+    exclude_exported=False,
+    exclude_downloaded=False,
+):
     # Stap 1: goedkope "flat" zoekopdracht (1 request) geeft al duur, titel en
-    # uploader terug, zodat we op lengte (en op al-geëxporteerd) kunnen
-    # filteren zonder elke video individueel te bevragen. Er wordt een buffer
-    # bovenop max_results opgevraagd zodat er nog marge is als een deel wordt
-    # weggefilterd of inmiddels niet meer beschikbaar blijkt te zijn. Deze
-    # filtering gebeurt VOORDAT we tot max_results beperken, zodat je bij
-    # "uitsluiten geëxporteerd" ook echt max_results NIEUWE clips terugkrijgt.
-    needs_buffer = bool(min_duration_minutes) or exclude_exported
+    # uploader terug, zodat we op lengte (en op al-geëxporteerd/gedownload)
+    # kunnen filteren zonder elke video individueel te bevragen. Er wordt een
+    # buffer bovenop max_results opgevraagd zodat er nog marge is als een deel
+    # wordt weggefilterd of inmiddels niet meer beschikbaar blijkt te zijn.
+    # Deze filtering gebeurt VOORDAT we tot max_results beperken, zodat je bij
+    # "uitsluiten geëxporteerd/gedownload" ook echt max_results NIEUWE clips
+    # terugkrijgt.
+    needs_buffer = bool(min_duration_minutes) or exclude_exported or exclude_downloaded
     fetch_count = min(max_results * 5, 200) if needs_buffer else min(max_results + 10, 200)
 
-    already_exported = exported_video_ids() if exclude_exported else set()
+    excluded_ids = set()
+    if exclude_exported:
+        excluded_ids |= exported_video_ids()
+    if exclude_downloaded:
+        excluded_ids |= downloaded_video_ids()
 
     flat_opts = {"quiet": True, "no_warnings": True, "extract_flat": True, "skip_download": True}
     with YoutubeDL(flat_opts) as ydl:
@@ -119,7 +162,7 @@ def search_youtube(query, max_results, min_duration_minutes=None, exclude_export
     for entry in flat_info.get("entries") or []:
         if entry is None:
             continue
-        if exclude_exported and entry.get("id") in already_exported:
+        if entry.get("id") in excluded_ids:
             continue
         duration_minutes = format_duration_minutes(entry.get("duration"))
         if min_duration_minutes and (duration_minutes is None or duration_minutes < min_duration_minutes):
@@ -192,7 +235,20 @@ def _download_video(url, dest_dir):
             merged = base + ".mp4"
             if os.path.exists(merged):
                 filename = merged
-        return filename
+        return filename, info
+
+
+def _info_to_record(info):
+    video_id = info.get("id")
+    return {
+        "video_id": video_id,
+        "title": info.get("title"),
+        "upload_date": format_upload_date(info.get("upload_date")),
+        "uploader": info.get("uploader") or info.get("channel"),
+        "duration_minutes": format_duration_minutes(info.get("duration")),
+        "quality": best_quality_label(info),
+        "url": info.get("webpage_url") or f"https://www.youtube.com/watch?v={video_id}",
+    }
 
 
 # =====================================================================================
@@ -229,15 +285,20 @@ def api_search():
         min_duration_minutes = None
 
     exclude_exported = bool(data.get("exclude_exported"))
+    exclude_downloaded = bool(data.get("exclude_downloaded"))
 
     try:
-        results = search_youtube(query, max_results, min_duration_minutes, exclude_exported)
+        results = search_youtube(
+            query, max_results, min_duration_minutes, exclude_exported, exclude_downloaded
+        )
     except Exception as exc:
         return jsonify({"error": f"Zoeken mislukt: {exc}"}), 500
 
     already_exported = exported_video_ids()
+    already_downloaded = downloaded_video_ids()
     for r in results:
         r["already_exported"] = r["video_id"] in already_exported
+        r["already_downloaded"] = r["video_id"] in already_downloaded
 
     return jsonify({"results": results})
 
@@ -280,10 +341,12 @@ def api_download():
 
     tmp_dir = tempfile.mkdtemp(prefix="ytdl_")
     try:
-        filepath = _download_video(url, tmp_dir)
+        filepath, info = _download_video(url, tmp_dir)
     except Exception as exc:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         return jsonify({"error": f"Download mislukt: {exc}"}), 500
+
+    record_downloads([_info_to_record(info)])
 
     response = send_file(filepath, as_attachment=True, download_name=os.path.basename(filepath))
     response.call_on_close(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
@@ -306,12 +369,12 @@ def api_download_bulk():
         except Exception:
             return None
 
-    downloaded = []
+    downloaded = []  # lijst van (filepath, info)
     failed = 0
     with ThreadPoolExecutor(max_workers=3) as pool:
-        for path in pool.map(_safe_download, urls):
-            if path:
-                downloaded.append(path)
+        for result in pool.map(_safe_download, urls):
+            if result:
+                downloaded.append(result)
             else:
                 failed += 1
 
@@ -319,11 +382,13 @@ def api_download_bulk():
         shutil.rmtree(tmp_dir, ignore_errors=True)
         return jsonify({"error": "Geen van de video's kon gedownload worden"}), 500
 
+    record_downloads([_info_to_record(info) for _, info in downloaded])
+
     zip_path = os.path.join(tmp_dir, "youtube-clips.zip")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as zf:
         used_names = set()
-        for path in downloaded:
-            name = os.path.basename(path)
+        for filepath, _ in downloaded:
+            name = os.path.basename(filepath)
             unique_name = name
             i = 1
             while unique_name in used_names:
@@ -331,7 +396,7 @@ def api_download_bulk():
                 unique_name = f"{base} ({i}){ext}"
                 i += 1
             used_names.add(unique_name)
-            zf.write(path, arcname=unique_name)
+            zf.write(filepath, arcname=unique_name)
 
     response = send_file(zip_path, as_attachment=True, download_name="youtube-clips.zip")
     response.headers["X-Downloaded-Count"] = str(len(downloaded))

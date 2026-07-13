@@ -15,7 +15,10 @@
   const downloadStatus = document.getElementById("download-status");
   const downloadStatusText = document.getElementById("download-status-text");
   const downloadSpinner = document.getElementById("download-spinner");
-  const filterRadios = document.querySelectorAll('input[name="filter"]');
+  const filterHideExported = document.getElementById("filter-hide-exported");
+  const filterHideDownloaded = document.getElementById("filter-hide-downloaded");
+  const excludeExportedCheckbox = document.getElementById("exclude-exported-checkbox");
+  const excludeDownloadedCheckbox = document.getElementById("exclude-downloaded-checkbox");
 
   const filterTitle = document.getElementById("filter-title");
   const filterDateFrom = document.getElementById("filter-date-from");
@@ -32,11 +35,6 @@
     const div = document.createElement("div");
     div.textContent = str == null ? "" : String(str);
     return div.innerHTML;
-  }
-
-  function currentFilter() {
-    const checked = document.querySelector('input[name="filter"]:checked');
-    return checked ? checked.value : "alle";
   }
 
   function visibleRows() {
@@ -85,12 +83,16 @@
   }
 
   function applyFilter() {
-    const filter = currentFilter();
+    const hideExported = filterHideExported.checked;
+    const hideDownloaded = filterHideDownloaded.checked;
     visibleRows().forEach((row) => {
       const item = currentResults[Number(row.dataset.index)];
       const alreadyExported = row.dataset.alreadyExported === "true";
+      const alreadyDownloaded = row.dataset.alreadyDownloaded === "true";
       const shouldHide =
-        (filter === "niet_geexporteerd" && alreadyExported) || !matchesFilters(item);
+        (hideExported && alreadyExported) ||
+        (hideDownloaded && alreadyDownloaded) ||
+        !matchesFilters(item);
       row.hidden = shouldHide;
       if (shouldHide) {
         row.querySelector('input[type="checkbox"]').checked = false;
@@ -120,6 +122,8 @@
     filterDurationMin.value = "";
     filterDurationMax.value = "";
     filterQuality.value = "";
+    filterHideExported.checked = false;
+    filterHideDownloaded.checked = false;
     applyFilter();
   }
 
@@ -140,6 +144,20 @@
       visibleChecked.length > 0 && visibleChecked.length < visible.length;
   }
 
+  function buildStatusBadges(item) {
+    const badges = [];
+    if (item.already_exported) {
+      badges.push('<span class="badge">eerder geëxporteerd</span>');
+    }
+    if (item.already_downloaded) {
+      badges.push('<span class="badge">eerder gedownload</span>');
+    }
+    if (badges.length === 0) {
+      badges.push('<span class="badge badge-muted">nieuw</span>');
+    }
+    return badges.join(" ");
+  }
+
   function renderResults(results) {
     currentResults = results;
     resultsBody.innerHTML = "";
@@ -148,10 +166,9 @@
       const row = document.createElement("tr");
       row.dataset.index = String(index);
       row.dataset.alreadyExported = item.already_exported ? "true" : "false";
+      row.dataset.alreadyDownloaded = item.already_downloaded ? "true" : "false";
 
-      const statusBadge = item.already_exported
-        ? '<span class="badge">eerder geëxporteerd</span>'
-        : '<span class="badge badge-muted">nieuw</span>';
+      const statusBadge = buildStatusBadges(item);
 
       row.innerHTML = `
         <td class="col-check"><input type="checkbox" class="row-check"></td>
@@ -182,8 +199,8 @@
     const query = document.getElementById("query").value.trim();
     const maxResults = document.getElementById("max_results").value;
     const minDuration = document.getElementById("min_duration").value;
-    const excludeExported =
-      document.querySelector('input[name="exclude_exported"]:checked').value === "uitsluiten";
+    const excludeExported = excludeExportedCheckbox.checked;
+    const excludeDownloaded = excludeDownloadedCheckbox.checked;
 
     if (!query) return;
 
@@ -201,6 +218,7 @@
           max_results: maxResults ? Number(maxResults) : 20,
           min_duration_minutes: minDuration ? Number(minDuration) : null,
           exclude_exported: excludeExported,
+          exclude_downloaded: excludeDownloaded,
         }),
       });
 
@@ -240,7 +258,7 @@
     updateSelectionCount();
   });
 
-  filterRadios.forEach((radio) => radio.addEventListener("change", applyFilter));
+  [filterHideExported, filterHideDownloaded].forEach((el) => el.addEventListener("change", applyFilter));
 
   [filterTitle, filterUploader].forEach((el) => el.addEventListener("input", applyFilter));
   [filterDateFrom, filterDateTo, filterDurationMin, filterDurationMax, filterQuality].forEach((el) =>
@@ -293,8 +311,8 @@
         const checkbox = row.querySelector('input[type="checkbox"]');
         if (checkbox.checked) {
           row.dataset.alreadyExported = "true";
-          const statusCell = row.querySelector(".status-cell");
-          statusCell.innerHTML = '<span class="badge">eerder geëxporteerd</span>';
+          const item = currentResults[Number(row.dataset.index)];
+          row.querySelector(".status-cell").innerHTML = buildStatusBadges(item);
         }
       });
 
@@ -348,6 +366,10 @@
 
       const blob = await resp.blob();
       triggerBlobDownload(blob, `${sanitizeFilename(item.title)} [${item.video_id}].mp4`);
+
+      item.already_downloaded = true;
+      row.dataset.alreadyDownloaded = "true";
+      row.querySelector(".status-cell").innerHTML = buildStatusBadges(item);
     } catch (err) {
       searchStatus.classList.add("error");
       searchStatusText.textContent = err.message;
@@ -391,6 +413,22 @@
       const blob = await resp.blob();
       const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
       triggerBlobDownload(blob, `youtube-clips-${timestamp}.zip`);
+
+      // Alle geselecteerde items markeren als gedownload. We weten niet welke
+      // van de individuele downloads eventueel mislukt zijn (de zip bevat
+      // alleen de gelukte), maar dat beïnvloedt hooguit de badge van een
+      // enkele mislukte clip totdat er opnieuw gezocht wordt.
+      selectedItems.forEach((item) => {
+        item.already_downloaded = true;
+      });
+      visibleRows().forEach((row) => {
+        const checkbox = row.querySelector('input[type="checkbox"]');
+        if (checkbox.checked) {
+          row.dataset.alreadyDownloaded = "true";
+          const item = currentResults[Number(row.dataset.index)];
+          row.querySelector(".status-cell").innerHTML = buildStatusBadges(item);
+        }
+      });
 
       downloadStatusText.textContent =
         failedCount && Number(failedCount) > 0

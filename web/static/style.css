@@ -190,7 +190,7 @@ input::placeholder { color: rgba(255,255,255,0.30); }
   cursor: pointer;
   user-select: none;
 }
-.radio-group {
+.radio-group, .checkbox-group-inline {
   display: flex;
   gap: 18px;
 }

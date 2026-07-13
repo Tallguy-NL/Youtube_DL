@@ -30,14 +30,14 @@
       </div>
       <div class="field field-grow-min">
         <label>&nbsp;</label>
-        <div class="radio-group">
-          <label class="radio-label">
-            <input type="radio" name="exclude_exported" value="alle" checked>
-            Alle resultaten
-          </label>
-          <label class="radio-label">
-            <input type="radio" name="exclude_exported" value="uitsluiten">
+        <div class="checkbox-group-inline">
+          <label class="checkbox-label">
+            <input type="checkbox" id="exclude-exported-checkbox">
             Uitsluiten geëxporteerd
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="exclude-downloaded-checkbox">
+            Uitsluiten gedownload
           </label>
         </div>
       </div>
@@ -58,14 +58,14 @@
           <input type="checkbox" id="select-all">
           Selecteer alles
         </label>
-        <div class="radio-group">
-          <label class="radio-label">
-            <input type="radio" name="filter" value="alle" checked>
-            Alle
+        <div class="checkbox-group-inline">
+          <label class="checkbox-label">
+            <input type="checkbox" id="filter-hide-exported">
+            Verberg geëxporteerde
           </label>
-          <label class="radio-label">
-            <input type="radio" name="filter" value="niet_geexporteerd">
-            Niet geëxporteerd
+          <label class="checkbox-label">
+            <input type="checkbox" id="filter-hide-downloaded">
+            Verberg gedownloade
           </label>
         </div>
       </div>
