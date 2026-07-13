@@ -393,6 +393,7 @@
     downloadZipBtn.disabled = true;
     downloadSpinner.hidden = false;
     downloadStatus.classList.remove("error");
+    downloadStatusText.classList.add("neon-pulse");
     downloadStatusText.textContent = `Bezig met downloaden van ${selectedItems.length} clip(s) in H.264 en inpakken als ZIP — dit kan enige tijd duren...`;
 
     try {
@@ -440,6 +441,7 @@
     } finally {
       downloadZipBtn.disabled = false;
       downloadSpinner.hidden = true;
+      downloadStatusText.classList.remove("neon-pulse");
     }
   });
 })();
