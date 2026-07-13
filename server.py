@@ -370,13 +370,13 @@ def api_download_bulk():
             return None
 
     downloaded = []  # lijst van (filepath, info)
-    failed = 0
+    failed_urls = []
     with ThreadPoolExecutor(max_workers=3) as pool:
-        for result in pool.map(_safe_download, urls):
+        for url, result in zip(urls, pool.map(_safe_download, urls)):
             if result:
                 downloaded.append(result)
             else:
-                failed += 1
+                failed_urls.append(url)
 
     if not downloaded:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -400,7 +400,8 @@ def api_download_bulk():
 
     response = send_file(zip_path, as_attachment=True, download_name="youtube-clips.zip")
     response.headers["X-Downloaded-Count"] = str(len(downloaded))
-    response.headers["X-Failed-Count"] = str(failed)
+    response.headers["X-Failed-Count"] = str(len(failed_urls))
+    response.headers["X-Failed-Urls"] = json.dumps(failed_urls)
     response.call_on_close(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
     return response
 

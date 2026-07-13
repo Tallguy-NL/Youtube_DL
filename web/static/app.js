@@ -15,6 +15,9 @@
   const downloadStatus = document.getElementById("download-status");
   const downloadStatusText = document.getElementById("download-status-text");
   const downloadSpinner = document.getElementById("download-spinner");
+  const failedModal = document.getElementById("failed-modal");
+  const failedModalList = document.getElementById("failed-modal-list");
+  const failedModalClose = document.getElementById("failed-modal-close");
   const filterHideExported = document.getElementById("filter-hide-exported");
   const filterHideDownloaded = document.getElementById("filter-hide-downloaded");
   const excludeExportedCheckbox = document.getElementById("exclude-exported-checkbox");
@@ -327,6 +330,29 @@
     }
   });
 
+  function showFailedModal(items) {
+    failedModalList.innerHTML = items
+      .map(
+        (item) => `
+          <li>
+            ${escapeHtml(item.title)}
+            <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener">${escapeHtml(item.url)}</a>
+          </li>
+        `
+      )
+      .join("");
+    failedModal.hidden = false;
+  }
+
+  failedModalClose.addEventListener("click", () => {
+    failedModal.hidden = true;
+  });
+  failedModal.addEventListener("click", (e) => {
+    if (e.target === failedModal) {
+      failedModal.hidden = true;
+    }
+  });
+
   function sanitizeFilename(name) {
     return (name || "clip").replace(/[\\/:*?"<>|]/g, "_").trim() || "clip";
   }
@@ -410,31 +436,43 @@
 
       const downloadedCount = resp.headers.get("X-Downloaded-Count");
       const failedCount = resp.headers.get("X-Failed-Count");
+      let failedUrls = [];
+      try {
+        failedUrls = JSON.parse(resp.headers.get("X-Failed-Urls") || "[]");
+      } catch (e) {
+        failedUrls = [];
+      }
+      const failedUrlSet = new Set(failedUrls);
 
       const blob = await resp.blob();
       const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
       triggerBlobDownload(blob, `youtube-clips-${timestamp}.zip`);
 
-      // Alle geselecteerde items markeren als gedownload. We weten niet welke
-      // van de individuele downloads eventueel mislukt zijn (de zip bevat
-      // alleen de gelukte), maar dat beïnvloedt hooguit de badge van een
-      // enkele mislukte clip totdat er opnieuw gezocht wordt.
-      selectedItems.forEach((item) => {
+      // Alleen de items die daadwerkelijk zijn gelukt markeren als gedownload
+      // (niet de mislukte, ook al waren die wel geselecteerd).
+      const succeededItems = selectedItems.filter((item) => !failedUrlSet.has(item.url));
+      const failedItems = selectedItems.filter((item) => failedUrlSet.has(item.url));
+
+      succeededItems.forEach((item) => {
         item.already_downloaded = true;
       });
       visibleRows().forEach((row) => {
         const checkbox = row.querySelector('input[type="checkbox"]');
-        if (checkbox.checked) {
+        const item = currentResults[Number(row.dataset.index)];
+        if (checkbox.checked && !failedUrlSet.has(item.url)) {
           row.dataset.alreadyDownloaded = "true";
-          const item = currentResults[Number(row.dataset.index)];
           row.querySelector(".status-cell").innerHTML = buildStatusBadges(item);
         }
       });
 
       downloadStatusText.textContent =
         failedCount && Number(failedCount) > 0
-          ? `${downloadedCount} clip(s) gedownload, ${failedCount} mislukt (niet meer beschikbaar).`
+          ? `${downloadedCount} clip(s) gedownload, ${failedCount} mislukt (niet meer beschikbaar of tijdelijke fout).`
           : `${downloadedCount} clip(s) gedownload en als ZIP opgeslagen.`;
+
+      if (failedItems.length > 0) {
+        showFailedModal(failedItems);
+      }
     } catch (err) {
       downloadStatus.classList.add("error");
       downloadStatusText.textContent = err.message;

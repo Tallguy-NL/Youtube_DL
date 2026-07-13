@@ -325,6 +325,65 @@ input[type="checkbox"], input[type="radio"] {
   white-space: nowrap;
 }
 
+/* === Modal === */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  padding: 24px;
+}
+.modal-box {
+  background: #0e1710;
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  padding: 28px;
+  max-width: 560px;
+  width: 100%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+.modal-box h3 {
+  margin: 0 0 10px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+.modal-subtitle {
+  margin: 0 0 16px;
+  font-size: 13.5px;
+  color: var(--text-muted);
+}
+.modal-list {
+  list-style: none;
+  margin: 0 0 20px;
+  padding: 0;
+  overflow-y: auto;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+}
+.modal-list li {
+  padding: 10px 14px;
+  font-size: 13.5px;
+  border-bottom: 1px solid var(--card-border);
+}
+.modal-list li:last-child { border-bottom: none; }
+.modal-list li a {
+  display: block;
+  font-size: 12px;
+  color: var(--accent-light);
+  text-decoration: none;
+  margin-top: 2px;
+}
+.modal-list li a:hover { text-decoration: underline; }
+#failed-modal-close { align-self: flex-end; }
+
 /* === Misc === */
 [hidden] { display: none !important; }
 

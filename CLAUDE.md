@@ -83,14 +83,18 @@ geserveerd via `send_from_directory`.
 
 - `POST /api/download/bulk` — body `{urls: [...]}`. Download alle opgegeven
   video's parallel (`ThreadPoolExecutor`, max 3 workers — beperkt om de
-  bandbreedte/CPU van de host niet te overbelasten), registreert ze allemaal
-  (met dezelfde `downloaded_at`-timestamp) in `data/downloads.json`, zipt de
-  resultaten (`ZIP_STORED`, geen compressie — video is al gecomprimeerd) en
-  stuurt de zip terug. Video's die niet meer beschikbaar zijn worden
-  overgeslagen (en dus ook niet geregistreerd); het aantal gelukt/mislukt komt
-  terug in de `X-Downloaded-Count`/`X-Failed-Count` response-headers zodat de
-  UI dat kan tonen. Alleen als **alle** downloads mislukken geeft de route een
-  500-foutmelding.
+  bandbreedte/CPU van de host niet te overbelasten), registreert alleen de
+  **gelukte** downloads (met dezelfde `downloaded_at`-timestamp) in
+  `data/downloads.json`, zipt de resultaten (`ZIP_STORED`, geen compressie —
+  video is al gecomprimeerd) en stuurt de zip terug. Video's die niet meer
+  beschikbaar zijn, of waarbij de download een fout gaf (bv. een verlopen
+  streaming-URL door YouTube-anti-bot-maatregelen — geeft een `HTTP 403`), 
+  worden overgeslagen en dus expliciet **niet** geregistreerd. Het aantal
+  gelukt/mislukt komt terug in de `X-Downloaded-Count`/`X-Failed-Count`
+  response-headers, en de mislukte URL's zelf in `X-Failed-Urls` (JSON-array)
+  zodat de UI kan tonen welke specifieke clips het niet gehaald hebben.
+  Alleen als **alle** downloads mislukken geeft de route een 500-foutmelding
+  (zonder `X-Failed-Urls`, want die situatie heeft geen zip-response).
 
 `data/downloads.json` heeft dezelfde rol voor downloads als `data/exports.json`
 voor exports: bron van waarheid voor "al eerder gedownload", gebruikt door
@@ -142,10 +146,14 @@ en geeft rijkere metadata (exacte resolutie in plaats van enkel hd/sd).
   beide van toepassing zijn).
   "Download geselecteerde (ZIP)" in de toolbar doet hetzelfde voor alle
   geselecteerde rijen ineens via `POST /api/download/bulk`, met een statusregel
-  die waarschuwt dat dit lang kan duren en die na afloop meldt hoeveel clips
-  gelukt/mislukt zijn (en markeert alle geselecteerde rijen als gedownload —
-  ook al kan een enkele individuele download binnen die batch mislukt zijn;
-  dat corrigeert zichzelf bij de volgende zoekopdracht).
+  die waarschuwt dat dit lang kan duren (en pulseert in de lime accentkleur
+  zolang de download loopt, via de `.neon-pulse`-class). Na afloop wordt de
+  `X-Failed-Urls`-header gebruikt om alleen de daadwerkelijk gelukte rijen als
+  "eerder gedownload" te markeren (niet de mislukte, ook al waren die wel
+  geselecteerd) — als er mislukte clips zijn, verschijnt een pop-up
+  (`showFailedModal()`, `#failed-modal` in `index.html`) met per mislukte clip
+  de titel en URL, zodat je precies weet welke je eventueel los opnieuw moet
+  proberen via de individuele Download-knop.
 
 ## Draaien
 
