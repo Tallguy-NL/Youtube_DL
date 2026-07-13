@@ -118,8 +118,24 @@ input::placeholder { color: rgba(255,255,255,0.30); }
   font-size: 13.5px;
   color: var(--text-muted);
   min-height: 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 .search-status.error { color: #ff8a8a; }
+
+.spinner {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.15);
+  border-top-color: var(--accent-light);
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 
 /* === Buttons === */
 .btn {

@@ -4,6 +4,8 @@
   const searchForm = document.getElementById("search-form");
   const searchBtn = document.getElementById("search-btn");
   const searchStatus = document.getElementById("search-status");
+  const searchStatusText = document.getElementById("search-status-text");
+  const searchSpinner = document.getElementById("search-spinner");
   const resultsCard = document.getElementById("results-card");
   const resultsBody = document.getElementById("results-body");
   const selectAll = document.getElementById("select-all");
@@ -156,7 +158,6 @@
       resultsBody.appendChild(row);
     });
 
-    resultsCard.hidden = results.length === 0 && searchStatus.textContent === "";
     resultsCard.hidden = false;
     selectAll.checked = false;
     populateQualityOptions(results);
@@ -173,8 +174,9 @@
     if (!query) return;
 
     searchBtn.disabled = true;
-    searchStatus.textContent = "Bezig met zoeken op YouTube...";
+    searchStatusText.textContent = "Bezig met zoeken op YouTube...";
     searchStatus.classList.remove("error");
+    searchSpinner.hidden = false;
 
     try {
       const resp = await fetch("/api/search", {
@@ -194,15 +196,16 @@
       }
 
       renderResults(data.results);
-      searchStatus.textContent = data.results.length
+      searchStatusText.textContent = data.results.length
         ? `${data.results.length} resultaten gevonden.`
         : "Geen resultaten gevonden die aan de criteria voldoen.";
     } catch (err) {
-      searchStatus.textContent = err.message;
+      searchStatusText.textContent = err.message;
       searchStatus.classList.add("error");
       resultsCard.hidden = true;
     } finally {
       searchBtn.disabled = false;
+      searchSpinner.hidden = true;
     }
   });
 
@@ -281,11 +284,11 @@
       });
 
       searchStatus.classList.remove("error");
-      searchStatus.textContent = `${selectedItems.length} URL('s) geëxporteerd.`;
+      searchStatusText.textContent = `${selectedItems.length} URL('s) geëxporteerd.`;
       applyFilter();
     } catch (err) {
       searchStatus.classList.add("error");
-      searchStatus.textContent = err.message;
+      searchStatusText.textContent = err.message;
     } finally {
       exportBtn.disabled = false;
     }
