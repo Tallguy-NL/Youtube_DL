@@ -203,13 +203,25 @@ en geeft rijkere metadata (exacte resolutie in plaats van enkel hd/sd).
   sluiten van toekomstige zoekopdrachten. Na een geslaagde aanroep verdwijnt de
   rij direct uit de tabel (`row.remove()`) — in tegenstelling tot exporteren/
   downloaden is er geen badge nodig, want de clip komt sowieso niet meer terug.
-- De navbar-knop "Verborgen clips" (`#hidden-clips-btn`) opent een modal
-  (`#hidden-modal`) die `GET /api/hidden` ophaalt en per clip een
-  "Terugzetten"-knop toont (`POST /api/hide/remove`). Na het terugzetten
-  verdwijnt de regel uit de modal-lijst; de clip wordt vanaf dat moment weer
-  gewoon meegenomen in zoekopdrachten. Dit is bewust een modal (zoals
-  `#failed-modal`) in plaats van een aparte pagina, om build-stap-vrij te
-  blijven.
+- De navbar-knop "Verborgen clips" (`#hidden-clips-btn`) opent een
+  pagina-vullende modal (`#hidden-modal`, `.modal-box-full`) die éénmalig
+  `GET /api/hidden` ophaalt (alle verborgen clips, geen server-side paginering)
+  en de rest volledig client-side afhandelt, net als de resultatentabel:
+  - Tabel met dezelfde kolommen als het zoekresultaat, min "Status" en
+    "Acties" (die daar niet van toepassing zijn): Titel, Datum, Uploader,
+    Duur (min), Kwaliteit, URL, plus een eigen "Terugzetten"-kolom
+    (`POST /api/hide/remove`).
+  - Zoekvelden op titel en uploader (`hiddenFilterTitle`/`hiddenFilterUploader`
+    in `app.js`) filteren dezelfde manier als de hoofdtabel (losstaande state,
+    niet gedeeld met `filterTitle`/`filterUploader`).
+  - Paginering (`hiddenPageSize`: 20/50/100 per pagina, Vorige/Volgende-knoppen)
+    werkt op de gefilterde lijst; `hiddenPage` wordt geclampt zodra filteren of
+    terugzetten het aantal pagina's verandert.
+  Na het terugzetten wordt de clip alleen uit de lokale `hiddenItems`-array
+  gehaald en opnieuw gerenderd (geen nieuwe fetch nodig); de clip wordt vanaf
+  dat moment weer gewoon meegenomen in zoekopdrachten. Dit blijft bewust een
+  modal (zoals `#failed-modal`) in plaats van een aparte pagina/route, om
+  build-stap-vrij te blijven — hij vult alleen vrijwel het hele scherm.
 
 ## Draaien
 

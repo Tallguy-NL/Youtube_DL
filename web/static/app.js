@@ -20,8 +20,15 @@
   const failedModalClose = document.getElementById("failed-modal-close");
   const hiddenClipsBtn = document.getElementById("hidden-clips-btn");
   const hiddenModal = document.getElementById("hidden-modal");
-  const hiddenModalList = document.getElementById("hidden-modal-list");
+  const hiddenModalBody = document.getElementById("hidden-modal-body");
   const hiddenModalClose = document.getElementById("hidden-modal-close");
+  const hiddenFilterTitle = document.getElementById("hidden-filter-title");
+  const hiddenFilterUploader = document.getElementById("hidden-filter-uploader");
+  const hiddenPageSize = document.getElementById("hidden-page-size");
+  const hiddenPrevBtn = document.getElementById("hidden-prev-btn");
+  const hiddenNextBtn = document.getElementById("hidden-next-btn");
+  const hiddenPageInfo = document.getElementById("hidden-page-info");
+  const hiddenResultCount = document.getElementById("hidden-result-count");
   const filterHideExported = document.getElementById("filter-hide-exported");
   const filterHideDownloaded = document.getElementById("filter-hide-downloaded");
   const excludeExportedCheckbox = document.getElementById("exclude-exported-checkbox");
@@ -449,47 +456,102 @@
     }
   });
 
-  function renderHiddenModal(items) {
-    if (items.length === 0) {
-      hiddenModalList.innerHTML = '<li>Er zijn geen verborgen clips.</li>';
-      return;
+  let hiddenItems = [];
+  let hiddenPage = 1;
+
+  function getFilteredHiddenItems() {
+    const titleQuery = hiddenFilterTitle.value.trim().toLowerCase();
+    const uploaderQuery = hiddenFilterUploader.value.trim().toLowerCase();
+    return hiddenItems.filter((item) => {
+      if (titleQuery && !(item.title || "").toLowerCase().includes(titleQuery)) {
+        return false;
+      }
+      if (uploaderQuery && !(item.uploader || "").toLowerCase().includes(uploaderQuery)) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  function renderHiddenModal() {
+    const filtered = getFilteredHiddenItems();
+    const pageSize = Number(hiddenPageSize.value) || 20;
+    const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+    hiddenPage = Math.min(Math.max(1, hiddenPage), totalPages);
+
+    const start = (hiddenPage - 1) * pageSize;
+    const pageItems = filtered.slice(start, start + pageSize);
+
+    if (pageItems.length === 0) {
+      hiddenModalBody.innerHTML = `<tr><td colspan="7">Er zijn geen verborgen clips${filtered.length !== hiddenItems.length ? " die aan de filters voldoen" : ""}.</td></tr>`;
+    } else {
+      hiddenModalBody.innerHTML = pageItems
+        .map(
+          (item) => `
+            <tr data-video-id="${escapeHtml(item.video_id)}">
+              <td class="title-cell">${escapeHtml(item.title)}</td>
+              <td>${escapeHtml(item.upload_date || "-")}</td>
+              <td>${escapeHtml(item.uploader || "-")}</td>
+              <td>${item.duration_minutes != null ? item.duration_minutes : "-"}</td>
+              <td>${escapeHtml(item.quality || "-")}</td>
+              <td class="url-cell"><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener" title="${escapeHtml(item.url)}">${escapeHtml(item.url)}</a></td>
+              <td><button type="button" class="btn btn-outline btn-tiny hidden-restore-btn">Terugzetten</button></td>
+            </tr>
+          `
+        )
+        .join("");
     }
-    hiddenModalList.innerHTML = items
-      .map(
-        (item) => `
-          <li data-video-id="${escapeHtml(item.video_id)}">
-            <div>
-              ${escapeHtml(item.title)}
-              <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener">${escapeHtml(item.url)}</a>
-            </div>
-            <button type="button" class="btn btn-outline btn-tiny hidden-restore-btn">Terugzetten</button>
-          </li>
-        `
-      )
-      .join("");
+
+    hiddenResultCount.textContent = `${filtered.length} verborgen clip(s)`;
+    hiddenPageInfo.textContent = `Pagina ${hiddenPage} van ${totalPages}`;
+    hiddenPrevBtn.disabled = hiddenPage <= 1;
+    hiddenNextBtn.disabled = hiddenPage >= totalPages;
   }
 
   hiddenClipsBtn.addEventListener("click", async () => {
     hiddenModal.hidden = false;
-    hiddenModalList.innerHTML = '<li>Laden...</li>';
+    hiddenModalBody.innerHTML = '<tr><td colspan="7">Laden...</td></tr>';
     try {
       const resp = await fetch("/api/hidden");
       const data = await resp.json();
       if (!resp.ok) {
         throw new Error(data.error || "Laden mislukt");
       }
-      renderHiddenModal(data.results);
+      hiddenItems = data.results;
+      hiddenFilterTitle.value = "";
+      hiddenFilterUploader.value = "";
+      hiddenPage = 1;
+      renderHiddenModal();
     } catch (err) {
-      hiddenModalList.innerHTML = `<li>${escapeHtml(err.message)}</li>`;
+      hiddenModalBody.innerHTML = `<tr><td colspan="7">${escapeHtml(err.message)}</td></tr>`;
     }
   });
 
-  hiddenModalList.addEventListener("click", async (e) => {
+  [hiddenFilterTitle, hiddenFilterUploader].forEach((el) =>
+    el.addEventListener("input", () => {
+      hiddenPage = 1;
+      renderHiddenModal();
+    })
+  );
+  hiddenPageSize.addEventListener("change", () => {
+    hiddenPage = 1;
+    renderHiddenModal();
+  });
+  hiddenPrevBtn.addEventListener("click", () => {
+    hiddenPage -= 1;
+    renderHiddenModal();
+  });
+  hiddenNextBtn.addEventListener("click", () => {
+    hiddenPage += 1;
+    renderHiddenModal();
+  });
+
+  hiddenModalBody.addEventListener("click", async (e) => {
     const btn = e.target.closest(".hidden-restore-btn");
     if (!btn) return;
 
-    const li = btn.closest("li");
-    const videoId = li.dataset.videoId;
+    const row = btn.closest("tr");
+    const videoId = row.dataset.videoId;
 
     btn.disabled = true;
     btn.textContent = "Bezig...";
@@ -504,10 +566,8 @@
       if (!resp.ok) {
         throw new Error(data.error || "Terugzetten mislukt");
       }
-      li.remove();
-      if (!hiddenModalList.querySelector("li")) {
-        hiddenModalList.innerHTML = '<li>Er zijn geen verborgen clips.</li>';
-      }
+      hiddenItems = hiddenItems.filter((item) => item.video_id !== videoId);
+      renderHiddenModal();
     } catch (err) {
       btn.disabled = false;
       btn.textContent = "Terugzetten";
