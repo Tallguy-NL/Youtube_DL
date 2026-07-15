@@ -221,7 +221,7 @@ input[type="checkbox"], input[type="radio"] {
 .filter-bar {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 14px;
+  gap: 14px 22px;
   align-items: end;
   padding: 16px;
   margin-bottom: 18px;
@@ -236,17 +236,23 @@ input[type="checkbox"], input[type="radio"] {
   border-radius: 10px;
   padding: 9px 12px;
   font-size: 13.5px;
+  line-height: 20px;
   color: var(--text);
   font-family: inherit;
   outline: none;
   width: 100%;
+  max-width: 100%;
   box-sizing: border-box;
   transition: border-color 0.15s;
 }
+.filter-bar input { -webkit-appearance: none; appearance: none; }
 .filter-bar input:focus, .filter-bar select:focus { border-color: var(--accent-light); }
 .filter-bar select { cursor: pointer; }
 .filter-bar select option { background: #0A130D; color: var(--text); }
 .filter-bar ::-webkit-calendar-picker-indicator { filter: invert(1) opacity(0.6); cursor: pointer; }
+.filter-bar input[type="date"] {
+  min-height: 38px;
+}
 #filter-reset-btn { padding: 9px 18px; font-size: 13px; white-space: nowrap; }
 
 /* === Table === */
