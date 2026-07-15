@@ -18,6 +18,10 @@
   const failedModal = document.getElementById("failed-modal");
   const failedModalList = document.getElementById("failed-modal-list");
   const failedModalClose = document.getElementById("failed-modal-close");
+  const hiddenClipsBtn = document.getElementById("hidden-clips-btn");
+  const hiddenModal = document.getElementById("hidden-modal");
+  const hiddenModalList = document.getElementById("hidden-modal-list");
+  const hiddenModalClose = document.getElementById("hidden-modal-close");
   const filterHideExported = document.getElementById("filter-hide-exported");
   const filterHideDownloaded = document.getElementById("filter-hide-downloaded");
   const excludeExportedCheckbox = document.getElementById("exclude-exported-checkbox");
@@ -182,8 +186,9 @@
         <td>${escapeHtml(item.quality || "-")}</td>
         <td class="url-cell"><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener" title="${escapeHtml(item.url)}">${escapeHtml(item.url)}</a></td>
         <td class="status-cell">${statusBadge}</td>
-        <td>
+        <td class="actions-cell">
           <button type="button" class="btn btn-outline btn-tiny row-download-btn">Download</button>
+          <button type="button" class="btn btn-outline btn-tiny row-hide-btn">Verbergen</button>
         </td>
       `;
 
@@ -382,7 +387,7 @@
       const resp = await fetch("/api/download", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: item.url }),
+        body: JSON.stringify(item),
       });
 
       if (!resp.ok) {
@@ -398,10 +403,123 @@
       row.querySelector(".status-cell").innerHTML = buildStatusBadges(item);
     } catch (err) {
       searchStatus.classList.add("error");
-      searchStatusText.textContent = err.message;
+      // Server verbergt de clip automatisch bij een mislukte download, dus de
+      // rij hoort niet langer in het huidige resultaat thuis.
+      searchStatusText.textContent = `${err.message} — "${item.title}" is automatisch verborgen en wordt voortaan uitgesloten van zoekresultaten.`;
+      row.remove();
+      updateSelectionCount();
+      return;
     } finally {
       btn.disabled = false;
       btn.textContent = originalText;
+    }
+  });
+
+  resultsBody.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".row-hide-btn");
+    if (!btn) return;
+
+    const row = btn.closest("tr");
+    const item = currentResults[Number(row.dataset.index)];
+
+    btn.disabled = true;
+    btn.textContent = "Bezig...";
+
+    try {
+      const resp = await fetch("/api/hide", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(item),
+      });
+
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.error || "Verbergen mislukt");
+      }
+
+      row.remove();
+      updateSelectionCount();
+      searchStatus.classList.remove("error");
+      searchStatusText.textContent = `"${item.title}" is verborgen en wordt voortaan uitgesloten van zoekresultaten.`;
+    } catch (err) {
+      searchStatus.classList.add("error");
+      searchStatusText.textContent = err.message;
+      btn.disabled = false;
+      btn.textContent = "Verbergen";
+    }
+  });
+
+  function renderHiddenModal(items) {
+    if (items.length === 0) {
+      hiddenModalList.innerHTML = '<li>Er zijn geen verborgen clips.</li>';
+      return;
+    }
+    hiddenModalList.innerHTML = items
+      .map(
+        (item) => `
+          <li data-video-id="${escapeHtml(item.video_id)}">
+            <div>
+              ${escapeHtml(item.title)}
+              <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener">${escapeHtml(item.url)}</a>
+            </div>
+            <button type="button" class="btn btn-outline btn-tiny hidden-restore-btn">Terugzetten</button>
+          </li>
+        `
+      )
+      .join("");
+  }
+
+  hiddenClipsBtn.addEventListener("click", async () => {
+    hiddenModal.hidden = false;
+    hiddenModalList.innerHTML = '<li>Laden...</li>';
+    try {
+      const resp = await fetch("/api/hidden");
+      const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(data.error || "Laden mislukt");
+      }
+      renderHiddenModal(data.results);
+    } catch (err) {
+      hiddenModalList.innerHTML = `<li>${escapeHtml(err.message)}</li>`;
+    }
+  });
+
+  hiddenModalList.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".hidden-restore-btn");
+    if (!btn) return;
+
+    const li = btn.closest("li");
+    const videoId = li.dataset.videoId;
+
+    btn.disabled = true;
+    btn.textContent = "Bezig...";
+
+    try {
+      const resp = await fetch("/api/hide/remove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ video_id: videoId }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(data.error || "Terugzetten mislukt");
+      }
+      li.remove();
+      if (!hiddenModalList.querySelector("li")) {
+        hiddenModalList.innerHTML = '<li>Er zijn geen verborgen clips.</li>';
+      }
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = "Terugzetten";
+    }
+  });
+
+  hiddenModalClose.addEventListener("click", () => {
+    hiddenModal.hidden = true;
+  });
+  hiddenModal.addEventListener("click", (e) => {
+    if (e.target === hiddenModal) {
+      hiddenModal.hidden = true;
     }
   });
 
@@ -426,7 +544,7 @@
       const resp = await fetch("/api/download/bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ urls: selectedItems.map((item) => item.url) }),
+        body: JSON.stringify({ items: selectedItems }),
       });
 
       if (!resp.ok) {
@@ -456,18 +574,24 @@
       succeededItems.forEach((item) => {
         item.already_downloaded = true;
       });
+      // Mislukte rijen zijn server-side automatisch verborgen (net als de
+      // handmatige "Verbergen"-actie) en horen dus niet meer in dit resultaat thuis.
       visibleRows().forEach((row) => {
         const checkbox = row.querySelector('input[type="checkbox"]');
         const item = currentResults[Number(row.dataset.index)];
-        if (checkbox.checked && !failedUrlSet.has(item.url)) {
+        if (!checkbox.checked) return;
+        if (failedUrlSet.has(item.url)) {
+          row.remove();
+        } else {
           row.dataset.alreadyDownloaded = "true";
           row.querySelector(".status-cell").innerHTML = buildStatusBadges(item);
         }
       });
+      updateSelectionCount();
 
       downloadStatusText.textContent =
         failedCount && Number(failedCount) > 0
-          ? `${downloadedCount} clip(s) gedownload, ${failedCount} mislukt (niet meer beschikbaar of tijdelijke fout).`
+          ? `${downloadedCount} clip(s) gedownload, ${failedCount} mislukt en automatisch verborgen (niet meer beschikbaar of tijdelijke fout).`
           : `${downloadedCount} clip(s) gedownload en als ZIP opgeslagen.`;
 
       if (failedItems.length > 0) {

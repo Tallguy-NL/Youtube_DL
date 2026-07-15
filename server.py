@@ -20,6 +20,7 @@ STATIC_DIR = os.path.join(WEB_DIR, "static")
 DATA_DIR = os.path.join(APP_ROOT, "data")
 EXPORTS_FILE = os.path.join(DATA_DIR, "exports.json")
 DOWNLOADS_FILE = os.path.join(DATA_DIR, "downloads.json")
+HIDDEN_FILE = os.path.join(DATA_DIR, "hidden.json")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -27,6 +28,7 @@ app = Flask(__name__, static_folder=None)
 
 _exports_lock = threading.Lock()
 _downloads_lock = threading.Lock()
+_hidden_lock = threading.Lock()
 
 
 # =====================================================================================
@@ -80,6 +82,36 @@ def record_downloads(records):
         entries = load_downloads()
         entries.extend({**record, "downloaded_at": downloaded_at} for record in records)
         save_downloads(entries)
+
+
+def load_hidden():
+    return _load_json_list(HIDDEN_FILE)
+
+
+def save_hidden(entries):
+    _save_json_list(HIDDEN_FILE, entries)
+
+
+def hidden_video_ids():
+    return {entry["video_id"] for entry in load_hidden()}
+
+
+def add_hidden(record):
+    video_id = record.get("video_id")
+    hidden_at = datetime.now(_AMS).isoformat()
+    with _hidden_lock:
+        entries = load_hidden()
+        if any(entry["video_id"] == video_id for entry in entries):
+            return
+        entries.append({**record, "hidden_at": hidden_at})
+        save_hidden(entries)
+
+
+def remove_hidden(video_id):
+    with _hidden_lock:
+        entries = load_hidden()
+        remaining = [entry for entry in entries if entry["video_id"] != video_id]
+        save_hidden(remaining)
 
 
 # =====================================================================================
@@ -145,10 +177,14 @@ def search_youtube(
     # Deze filtering gebeurt VOORDAT we tot max_results beperken, zodat je bij
     # "uitsluiten geëxporteerd/gedownload" ook echt max_results NIEUWE clips
     # terugkrijgt.
-    needs_buffer = bool(min_duration_minutes) or exclude_exported or exclude_downloaded
+    # Verborgen clips worden altijd uitgesloten (permanent, geen checkbox nodig) —
+    # in tegenstelling tot exclude_exported/exclude_downloaded die optioneel zijn.
+    hidden_ids = hidden_video_ids()
+
+    needs_buffer = bool(min_duration_minutes) or exclude_exported or exclude_downloaded or bool(hidden_ids)
     fetch_count = min(max_results * 5, 200) if needs_buffer else min(max_results + 10, 200)
 
-    excluded_ids = set()
+    excluded_ids = set(hidden_ids)
     if exclude_exported:
         excluded_ids |= exported_video_ids()
     if exclude_downloaded:
@@ -332,6 +368,57 @@ def api_export():
     return jsonify({"exported_count": len(items), "exported_at": exported_at})
 
 
+@app.route("/api/hide", methods=["POST"])
+def api_hide():
+    data = request.get_json(force=True) or {}
+    video_id = data.get("video_id")
+    if not video_id:
+        return jsonify({"error": "video_id is verplicht"}), 400
+
+    add_hidden(
+        {
+            "video_id": video_id,
+            "title": data.get("title"),
+            "upload_date": data.get("upload_date"),
+            "uploader": data.get("uploader"),
+            "duration_minutes": data.get("duration_minutes"),
+            "quality": data.get("quality"),
+            "url": data.get("url"),
+        }
+    )
+    return jsonify({"ok": True})
+
+
+@app.route("/api/hidden", methods=["GET"])
+def api_hidden_list():
+    entries = load_hidden()
+    entries.sort(key=lambda e: e.get("hidden_at") or "", reverse=True)
+    return jsonify({"results": entries})
+
+
+@app.route("/api/hide/remove", methods=["POST"])
+def api_hide_remove():
+    data = request.get_json(force=True) or {}
+    video_id = data.get("video_id")
+    if not video_id:
+        return jsonify({"error": "video_id is verplicht"}), 400
+
+    remove_hidden(video_id)
+    return jsonify({"ok": True})
+
+
+def _item_to_hidden_record(item, url):
+    return {
+        "video_id": item.get("video_id"),
+        "title": item.get("title"),
+        "upload_date": item.get("upload_date"),
+        "uploader": item.get("uploader"),
+        "duration_minutes": item.get("duration_minutes"),
+        "quality": item.get("quality"),
+        "url": url,
+    }
+
+
 @app.route("/api/download", methods=["POST"])
 def api_download():
     data = request.get_json(force=True) or {}
@@ -344,6 +431,11 @@ def api_download():
         filepath, info = _download_video(url, tmp_dir)
     except Exception as exc:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+        # Clip kon niet gedownload worden (bv. verlopen streaming-URL door
+        # YouTube-anti-bot-maatregelen) — voortaan automatisch uitsluiten van
+        # zoekresultaten, net als een handmatige "Verbergen"-actie.
+        if data.get("video_id"):
+            add_hidden(_item_to_hidden_record(data, url))
         return jsonify({"error": f"Download mislukt: {exc}"}), 500
 
     record_downloads([_info_to_record(info)])
@@ -356,33 +448,41 @@ def api_download():
 @app.route("/api/download/bulk", methods=["POST"])
 def api_download_bulk():
     data = request.get_json(force=True) or {}
-    urls = [u.strip() for u in (data.get("urls") or []) if u and u.strip()]
-    if not urls:
+    items = [item for item in (data.get("items") or []) if (item.get("url") or "").strip()]
+    if not items:
         return jsonify({"error": "Geen URL's opgegeven"}), 400
 
     tmp_dir = tempfile.mkdtemp(prefix="ytdl_bulk_")
 
-    def _safe_download(video_url):
+    def _safe_download(item):
         video_dir = tempfile.mkdtemp(dir=tmp_dir)
         try:
-            return _download_video(video_url, video_dir)
+            return _download_video(item["url"].strip(), video_dir)
         except Exception:
             return None
 
     downloaded = []  # lijst van (filepath, info)
-    failed_urls = []
+    failed_items = []
     with ThreadPoolExecutor(max_workers=3) as pool:
-        for url, result in zip(urls, pool.map(_safe_download, urls)):
+        for item, result in zip(items, pool.map(_safe_download, items)):
             if result:
                 downloaded.append(result)
             else:
-                failed_urls.append(url)
+                failed_items.append(item)
 
     if not downloaded:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         return jsonify({"error": "Geen van de video's kon gedownload worden"}), 500
 
     record_downloads([_info_to_record(info) for _, info in downloaded])
+
+    # Mislukte clips (bv. verlopen streaming-URL door YouTube-anti-bot-
+    # maatregelen) automatisch permanent uitsluiten van zoekresultaten.
+    for item in failed_items:
+        if item.get("video_id"):
+            add_hidden(_item_to_hidden_record(item, item["url"].strip()))
+
+    failed_urls = [item["url"].strip() for item in failed_items]
 
     zip_path = os.path.join(tmp_dir, "youtube-clips.zip")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as zf:

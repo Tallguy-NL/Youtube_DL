@@ -41,6 +41,7 @@ html, body {
   -webkit-backdrop-filter: blur(14px);
   display: flex;
   align-items: center;
+  justify-content: space-between;
   padding: 0 36px;
   z-index: 100;
   border-bottom: 1px solid var(--card-border);
@@ -293,6 +294,15 @@ input[type="checkbox"], input[type="radio"] {
 .results-table td.url-cell {
   max-width: 180px;
 }
+.results-table td.actions-cell {
+  white-space: nowrap;
+}
+.results-table td.actions-cell .btn-tiny {
+  margin-right: 8px;
+}
+.results-table td.actions-cell .btn-tiny:last-child {
+  margin-right: 0;
+}
 .results-table td.url-cell a {
   display: inline-block;
   max-width: 100%;
@@ -387,6 +397,15 @@ input[type="checkbox"], input[type="radio"] {
 }
 .modal-list li a:hover { text-decoration: underline; }
 #failed-modal-close { align-self: flex-end; }
+
+#hidden-modal-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+#hidden-modal-list .hidden-restore-btn { flex-shrink: 0; }
+#hidden-modal-close { align-self: flex-end; }
 
 /* === Misc === */
 [hidden] { display: none !important; }

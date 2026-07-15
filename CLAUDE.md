@@ -2,7 +2,9 @@
 
 Webapp om op YouTube te zoeken naar clips, resultaten te selecteren en de URL's van
 geselecteerde clips in bulk te exporteren. Bijhoudt welke clips al eerder
-geëxporteerd zijn.
+geëxporteerd zijn, en laat je clips permanent verbergen (handmatig of
+automatisch bij een mislukte download) zodat ze niet meer terugkomen in
+zoekresultaten.
 
 ## Architectuur
 
@@ -15,6 +17,8 @@ requirements.txt        Flask, yt-dlp
 data/
   exports.json          Geschiedenis van alle geëxporteerde clips (append-only)
   downloads.json         Geschiedenis van alle gedownloade clips (append-only)
+  hidden.json            Permanent uitgesloten clips (muteerbaar: regels worden
+                         verwijderd zodra een clip wordt teruggezet)
 web/
   index.html             Paginastructuur (zoekformulier + resultatentabel)
   static/
@@ -54,6 +58,14 @@ geserveerd via `send_from_directory`.
      want al weggefilterd), zodat de client-side filters en badges blijven
      werken voor een zoekopdracht zonder die uitsluiting.
 
+  Verborgen clips (`data/hidden.json`, zie hieronder) worden — in tegenstelling
+  tot `exclude_exported`/`exclude_downloaded` — **altijd onvoorwaardelijk**
+  uitgesloten, zonder dat daar een checkbox voor nodig is: `hidden_video_ids()`
+  zit standaard in `excluded_ids` in `search_youtube()`. `needs_buffer` houdt
+  daar ook rekening mee (fetcht een grotere batch zodra er verborgen clips
+  bestaan), zodat een zoekopdracht na het verbergen van clips niet zomaar
+  minder dan `max_results` resultaten teruggeeft.
+
   Deze tweetraps-aanpak (flat filteren → gericht volledig extraheren) is een
   bewuste keuze: alles in één keer volledig extraheren (zoals de eerste versie
   deed) was met een minimale-lengte-filter en 20 resultaten 60+ seconden traag
@@ -65,11 +77,15 @@ geserveerd via `send_from_directory`.
   gededupliceerd, dus eenzelfde video kan meerdere exportregels hebben als hij
   vaker geëxporteerd wordt (geeft een volledige geschiedenis).
 
-- `POST /api/download` — body `{url}`. Downloadt één video via yt-dlp in
-  **H.264/AVC** (`H264_FORMAT` in `server.py`), gemuxt naar mp4, en stuurt het
-  bestand terug als attachment. Geen transcodering: YouTube levert dit codec
-  meestal al native, dus dit is puur downloaden + samenvoegen van de losse
-  video-/audiotrack (snel, `ffmpeg -c copy`). Hogere resoluties (>1080p) zijn op
+- `POST /api/download` — body is het volledige resultaat-item (`url`,
+  `video_id`, `title`, `upload_date`, `uploader`, `duration_minutes`,
+  `quality`, ...), niet slechts een kale `url` — de overige velden zijn nodig
+  om de clip te kunnen registreren in `data/hidden.json` als de download
+  mislukt (zie onder). Downloadt één video via yt-dlp in **H.264/AVC**
+  (`H264_FORMAT` in `server.py`), gemuxt naar mp4, en stuurt het bestand terug
+  als attachment. Geen transcodering: YouTube levert dit codec meestal al
+  native, dus dit is puur downloaden + samenvoegen van de losse video-/
+  audiotrack (snel, `ffmpeg -c copy`). Hogere resoluties (>1080p) zijn op
   YouTube vaak alleen in VP9/AV1 beschikbaar, dus de H.264-download kan lager
   uitvallen dan de "kwaliteit" die in de resultatentabel getoond wordt (die
   reflecteert de beste kwaliteit over alle codecs heen). Download gaat naar een
@@ -79,26 +95,50 @@ geserveerd via `send_from_directory`.
   gestreamd, wat het bestand voortijdig zou verwijderen). Na een geslaagde
   download wordt de video geregistreerd in `data/downloads.json` (via
   `record_downloads()` + `_info_to_record()`, die de al door yt-dlp opgehaalde
-  `info`-dict hergebruikt — geen extra request nodig).
+  `info`-dict hergebruikt — geen extra request nodig). Bij een **mislukte**
+  download wordt de clip juist automatisch aan `data/hidden.json` toegevoegd
+  (via `_item_to_hidden_record()` + `add_hidden()`, met de metadata uit de
+  request body) — zo'n clip is doorgaans blijvend niet-downloadbaar (bv. een
+  verlopen streaming-URL door YouTube-anti-bot-maatregelen) en hoeft dan ook
+  niet in latere zoekresultaten terug te komen.
 
-- `POST /api/download/bulk` — body `{urls: [...]}`. Download alle opgegeven
-  video's parallel (`ThreadPoolExecutor`, max 3 workers — beperkt om de
-  bandbreedte/CPU van de host niet te overbelasten), registreert alleen de
-  **gelukte** downloads (met dezelfde `downloaded_at`-timestamp) in
-  `data/downloads.json`, zipt de resultaten (`ZIP_STORED`, geen compressie —
-  video is al gecomprimeerd) en stuurt de zip terug. Video's die niet meer
-  beschikbaar zijn, of waarbij de download een fout gaf (bv. een verlopen
-  streaming-URL door YouTube-anti-bot-maatregelen — geeft een `HTTP 403`), 
-  worden overgeslagen en dus expliciet **niet** geregistreerd. Het aantal
-  gelukt/mislukt komt terug in de `X-Downloaded-Count`/`X-Failed-Count`
-  response-headers, en de mislukte URL's zelf in `X-Failed-Urls` (JSON-array)
-  zodat de UI kan tonen welke specifieke clips het niet gehaald hebben.
-  Alleen als **alle** downloads mislukken geeft de route een 500-foutmelding
-  (zonder `X-Failed-Urls`, want die situatie heeft geen zip-response).
+- `POST /api/download/bulk` — body `{items: [...]}` (volledige resultaat-items,
+  om dezelfde reden als bij `/api/download`). Download alle opgegeven video's
+  parallel (`ThreadPoolExecutor`, max 3 workers — beperkt om de bandbreedte/CPU
+  van de host niet te overbelasten), registreert alleen de **gelukte**
+  downloads (met dezelfde `downloaded_at`-timestamp) in `data/downloads.json`,
+  zipt de resultaten (`ZIP_STORED`, geen compressie — video is al
+  gecomprimeerd) en stuurt de zip terug. Video's die niet meer beschikbaar
+  zijn, of waarbij de download een fout gaf (bv. een verlopen streaming-URL
+  door YouTube-anti-bot-maatregelen — geeft een `HTTP 403`), worden
+  overgeslagen, dus expliciet **niet** in `data/downloads.json` geregistreerd,
+  maar **wel** (net als bij de enkele download) automatisch aan
+  `data/hidden.json` toegevoegd. Het aantal gelukt/mislukt komt terug in de
+  `X-Downloaded-Count`/`X-Failed-Count` response-headers, en de mislukte
+  URL's zelf in `X-Failed-Urls` (JSON-array) zodat de UI kan tonen welke
+  specifieke clips het niet gehaald hebben. Alleen als **alle** downloads
+  mislukken geeft de route een 500-foutmelding (zonder `X-Failed-Urls`, want
+  die situatie heeft geen zip-response).
+
+- `POST /api/hide` — body is het volledige resultaat-item. Voegt de clip toe
+  aan `data/hidden.json` (met een `hidden_at`-timestamp), tenzij hij al
+  verborgen was (`add_hidden()` dedupliceert op `video_id`). Wordt aangeroepen
+  door de "Verbergen"-knop per rij.
+
+- `GET /api/hidden` — geeft alle verborgen clips terug (nieuwste eerst, op
+  `hidden_at`), voor het "Verborgen clips"-overzicht.
+
+- `POST /api/hide/remove` — body `{video_id}`. Verwijdert de clip weer uit
+  `data/hidden.json` (`remove_hidden()`), zodat hij bij een volgende
+  zoekopdracht weer gewoon meegenomen wordt. Wordt aangeroepen door de
+  "Terugzetten"-knop in het "Verborgen clips"-overzicht.
 
 `data/downloads.json` heeft dezelfde rol voor downloads als `data/exports.json`
 voor exports: bron van waarheid voor "al eerder gedownload", gebruikt door
 zowel `exclude_downloaded` in `/api/search` als de `already_downloaded`-badge.
+`data/hidden.json` is anders dan die twee: geen append-only geschiedenis, maar
+een muteerbare set van permanent uitgesloten clips (regels worden echt
+verwijderd bij het terugzetten via `remove_hidden()`).
 
 `ffmpeg` is vereist (voor het muxen van losse video-/audiotracks) en zit in het
 Docker-image (`apt-get install ffmpeg` in de `Dockerfile`); lokaal via
@@ -152,8 +192,24 @@ en geeft rijkere metadata (exacte resolutie in plaats van enkel hd/sd).
   "eerder gedownload" te markeren (niet de mislukte, ook al waren die wel
   geselecteerd) — als er mislukte clips zijn, verschijnt een pop-up
   (`showFailedModal()`, `#failed-modal` in `index.html`) met per mislukte clip
-  de titel en URL, zodat je precies weet welke je eventueel los opnieuw moet
-  proberen via de individuele Download-knop.
+  de titel en URL. Mislukte downloads (zowel enkel als bulk) worden
+  server-side automatisch aan `data/hidden.json` toegevoegd (zie hierboven), dus
+  die rijen worden ook meteen client-side uit de huidige resultatentabel
+  verwijderd (`row.remove()`) in plaats van enkel gemarkeerd — een nieuwe poging
+  via de individuele Download-knop heeft geen zin, want de clip komt toch niet
+  meer terug in een zoekopdracht tenzij je hem terugzet via "Verborgen clips".
+- Elke rij heeft ook een "Verbergen"-knop (`POST /api/hide`, naast de
+  Download-knop in de "Acties"-kolom) om een clip handmatig permanent uit te
+  sluiten van toekomstige zoekopdrachten. Na een geslaagde aanroep verdwijnt de
+  rij direct uit de tabel (`row.remove()`) — in tegenstelling tot exporteren/
+  downloaden is er geen badge nodig, want de clip komt sowieso niet meer terug.
+- De navbar-knop "Verborgen clips" (`#hidden-clips-btn`) opent een modal
+  (`#hidden-modal`) die `GET /api/hidden` ophaalt en per clip een
+  "Terugzetten"-knop toont (`POST /api/hide/remove`). Na het terugzetten
+  verdwijnt de regel uit de modal-lijst; de clip wordt vanaf dat moment weer
+  gewoon meegenomen in zoekopdrachten. Dit is bewust een modal (zoals
+  `#failed-modal`) in plaats van een aparte pagina, om build-stap-vrij te
+  blijven.
 
 ## Draaien
 

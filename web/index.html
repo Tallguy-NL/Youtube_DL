@@ -10,6 +10,7 @@
 
 <nav class="navbar">
   <a class="navbar-brand" href="/">YouTube <span class="accent">Clip Finder</span></a>
+  <button type="button" class="btn btn-outline btn-tiny navbar-link" id="hidden-clips-btn">Verborgen clips</button>
 </nav>
 
 <main class="page">
@@ -129,7 +130,7 @@
             <th title="H.264 (AVC), beste beschikbare kwaliteit - vaak maximaal 1080p omdat YouTube hogere resoluties meestal alleen in VP9/AV1 aanbiedt">Kwaliteit</th>
             <th>URL</th>
             <th>Status</th>
-            <th>Download</th>
+            <th>Acties</th>
           </tr>
         </thead>
         <tbody id="results-body"></tbody>
@@ -142,9 +143,18 @@
 <div class="modal-overlay" id="failed-modal" hidden>
   <div class="modal-box">
     <h3>Niet gedownload</h3>
-    <p class="modal-subtitle">Deze geselecteerde clips konden niet gedownload worden (bv. inmiddels niet meer beschikbaar, of een tijdelijke fout):</p>
+    <p class="modal-subtitle">Deze geselecteerde clips konden niet gedownload worden (bv. inmiddels niet meer beschikbaar, of een tijdelijke fout) en zijn automatisch verborgen — ze komen voortaan niet meer terug in zoekresultaten. Zet ze terug via "Verborgen clips" als je het toch nog eens wilt proberen:</p>
     <ul class="modal-list" id="failed-modal-list"></ul>
     <button type="button" class="btn btn-solid" id="failed-modal-close">Sluiten</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="hidden-modal" hidden>
+  <div class="modal-box">
+    <h3>Verborgen clips</h3>
+    <p class="modal-subtitle">Deze clips worden permanent uitgesloten van zoekresultaten. Zet een clip terug om hem weer mee te nemen in toekomstige zoekopdrachten.</p>
+    <ul class="modal-list" id="hidden-modal-list"></ul>
+    <button type="button" class="btn btn-solid" id="hidden-modal-close">Sluiten</button>
   </div>
 </div>
 
