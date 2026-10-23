@@ -140,6 +140,14 @@ zowel `exclude_downloaded` in `/api/search` als de `already_downloaded`-badge.
 een muteerbare set van permanent uitgesloten clips (regels worden echt
 verwijderd bij het terugzetten via `remove_hidden()`).
 
+**YouTube-bot-check ("Sign in to confirm you're not a bot")**: downloads
+authenticeren via een Netscape-cookiebestand (`COOKIES_FILE` env, standaard
+`data/cookies.txt` — in Docker beschikbaar via het `data`-volume, gitignored) of
+lokaal via env `COOKIES_FROM_BROWSER` (bv. `chrome`). Zie `_auth_opts()`; per
+download wordt een kopie van het cookiebestand gebruikt (parallelle downloads).
+Een bot-check-fout (`_is_bot_check()`) is geen eigenschap van de clip, dus die
+clips worden **niet** automatisch verborgen (enkel en bulk).
+
 `ffmpeg` is vereist (voor het muxen van losse video-/audiotracks) en zit in het
 Docker-image (`apt-get install ffmpeg` in de `Dockerfile`); lokaal via
 `brew install ffmpeg`.

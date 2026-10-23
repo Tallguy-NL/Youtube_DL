@@ -254,6 +254,32 @@ def search_youtube(
 H264_FORMAT = "bestvideo[vcodec^=avc1]+bestaudio[ext=m4a]/best[vcodec^=avc1]/best"
 
 
+# YouTube vraagt vaak om in te loggen ("Sign in to confirm you're not a bot").
+# Authenticatie kan op twee manieren, in volgorde van voorkeur:
+#   1. een Netscape-cookiebestand: pad in env COOKIES_FILE, of data/cookies.txt
+#      (werkt ook in Docker, want data/ is een volume);
+#   2. env COOKIES_FROM_BROWSER (bv. "chrome" of "safari") — alleen lokaal zinvol.
+COOKIES_FILE = os.environ.get("COOKIES_FILE") or os.path.join(DATA_DIR, "cookies.txt")
+COOKIES_FROM_BROWSER = os.environ.get("COOKIES_FROM_BROWSER")
+
+
+def _auth_opts(dest_dir):
+    if os.path.isfile(COOKIES_FILE):
+        # yt-dlp schrijft het cookiebestand terug; per download een kopie
+        # gebruiken zodat parallelle downloads het origineel niet corrumperen.
+        cookie_copy = os.path.join(dest_dir, "cookies.txt")
+        shutil.copyfile(COOKIES_FILE, cookie_copy)
+        return {"cookiefile": cookie_copy}
+    if COOKIES_FROM_BROWSER:
+        return {"cookiesfrombrowser": (COOKIES_FROM_BROWSER,)}
+    return {}
+
+
+def _is_bot_check(exc):
+    # Geen eigenschap van de clip maar van de server/sessie: niet verbergen.
+    return "confirm you" in str(exc) and "not a bot" in str(exc)
+
+
 def _download_video(url, dest_dir):
     ydl_opts = {
         "quiet": True,
@@ -261,6 +287,7 @@ def _download_video(url, dest_dir):
         "format": H264_FORMAT,
         "merge_output_format": "mp4",
         "outtmpl": os.path.join(dest_dir, "%(title).150B [%(id)s].%(ext)s"),
+        **_auth_opts(dest_dir),
     }
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
@@ -431,6 +458,11 @@ def api_download():
         filepath, info = _download_video(url, tmp_dir)
     except Exception as exc:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+        if _is_bot_check(exc):
+            return jsonify({"error": (
+                f"Download mislukt: {exc} — YouTube vraagt om inloggen; "
+                "de clip is niet verborgen. Zie COOKIES_FILE/data/cookies.txt."
+            )}), 500
         # Clip kon niet gedownload worden (bv. verlopen streaming-URL door
         # YouTube-anti-bot-maatregelen) — voortaan automatisch uitsluiten van
         # zoekresultaten, net als een handmatige "Verbergen"-actie.
@@ -458,20 +490,28 @@ def api_download_bulk():
         video_dir = tempfile.mkdtemp(dir=tmp_dir)
         try:
             return _download_video(item["url"].strip(), video_dir)
-        except Exception:
-            return None
+        except Exception as exc:
+            return exc if _is_bot_check(exc) else None
 
     downloaded = []  # lijst van (filepath, info)
     failed_items = []
+    bot_check_items = []  # bot-check: niet verbergen, maar ook niet als gelukt tellen
     with ThreadPoolExecutor(max_workers=3) as pool:
         for item, result in zip(items, pool.map(_safe_download, items)):
-            if result:
+            if isinstance(result, Exception):
+                bot_check_items.append(item)
+            elif result:
                 downloaded.append(result)
             else:
                 failed_items.append(item)
 
     if not downloaded:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+        if bot_check_items:
+            return jsonify({"error": (
+                "YouTube vraagt om in te loggen (bot-check); geen clips verborgen. "
+                "Voeg cookies toe via COOKIES_FILE/data/cookies.txt."
+            )}), 500
         return jsonify({"error": "Geen van de video's kon gedownload worden"}), 500
 
     record_downloads([_info_to_record(info) for _, info in downloaded])
@@ -482,7 +522,7 @@ def api_download_bulk():
         if item.get("video_id"):
             add_hidden(_item_to_hidden_record(item, item["url"].strip()))
 
-    failed_urls = [item["url"].strip() for item in failed_items]
+    failed_urls = [item["url"].strip() for item in failed_items + bot_check_items]
 
     zip_path = os.path.join(tmp_dir, "youtube-clips.zip")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as zf:
