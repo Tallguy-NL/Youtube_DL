@@ -10,6 +10,8 @@ cd "$APP_DIR"
 
 git pull origin master
 
+git log -1 --format=%cd --date=format:'%d-%m-%Y %H:%M' > version.txt
+
 docker build --network host --no-cache -t youtube_dl_youtube_dl:latest .
 docker compose down
 docker compose up -d --no-build

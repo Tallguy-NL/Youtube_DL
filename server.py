@@ -2,6 +2,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import threading
 import zipfile
@@ -23,6 +24,29 @@ DOWNLOADS_FILE = os.path.join(DATA_DIR, "downloads.json")
 HIDDEN_FILE = os.path.join(DATA_DIR, "hidden.json")
 
 os.makedirs(DATA_DIR, exist_ok=True)
+
+# Datum van de laatste commit, zodat de UI toont tot wanneer de app is bijgewerkt.
+# In Docker zit .git niet in het image: deploy.sh schrijft dan version.txt.
+VERSION_FILE = os.path.join(APP_ROOT, "version.txt")
+
+
+def _read_version():
+    try:
+        with open(VERSION_FILE) as f:
+            return f.read().strip()
+    except OSError:
+        pass
+    try:
+        out = subprocess.run(
+            ["git", "log", "-1", "--format=%cd", "--date=format:%d-%m-%Y %H:%M"],
+            cwd=APP_ROOT, capture_output=True, text=True, timeout=5,
+        )
+        return out.stdout.strip() if out.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+APP_VERSION = _read_version()
 
 app = Flask(__name__, static_folder=None)
 
@@ -317,6 +341,11 @@ def _info_to_record(info):
 # =====================================================================================
 # Routes
 # =====================================================================================
+
+@app.route("/api/version")
+def api_version():
+    return jsonify({"updated": APP_VERSION})
+
 
 @app.route("/")
 def index():

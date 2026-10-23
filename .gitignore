@@ -16,3 +16,4 @@ __pycache__/
 .env
 
 data/cookies.txt
+version.txt

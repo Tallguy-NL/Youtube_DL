@@ -59,6 +59,13 @@ html, body {
   font-weight: 500;
 }
 
+.navbar-brand .app-version {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+
 /* === Page layout === */
 .page {
   max-width: 1180px;

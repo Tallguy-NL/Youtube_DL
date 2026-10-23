@@ -1,6 +1,13 @@
 (function () {
   "use strict";
 
+  fetch("/api/version")
+    .then((r) => r.json())
+    .then((v) => {
+      if (v.updated) document.getElementById("app-version").textContent = `bijgewerkt ${v.updated}`;
+    })
+    .catch(() => {});
+
   const searchForm = document.getElementById("search-form");
   const searchBtn = document.getElementById("search-btn");
   const searchStatus = document.getElementById("search-status");

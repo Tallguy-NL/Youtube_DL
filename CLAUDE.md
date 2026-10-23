@@ -148,6 +148,12 @@ download wordt een kopie van het cookiebestand gebruikt (parallelle downloads).
 Een bot-check-fout (`_is_bot_check()`) is geen eigenschap van de clip, dus die
 clips worden **niet** automatisch verborgen (enkel en bulk).
 
+**Versie-indicatie**: de navbar toont klein "bijgewerkt <datum laatste commit>"
+(`GET /api/version`, `APP_VERSION` in `server.py`). In Docker zit `.git` niet in
+het image, dus `deploy.sh` schrijft vóór de build `version.txt` (gitignored,
+via `COPY version.tx[t]` in de `Dockerfile` optioneel); lokaal valt de server
+terug op `git log`.
+
 `ffmpeg` is vereist (voor het muxen van losse video-/audiotracks) en zit in het
 Docker-image (`apt-get install ffmpeg` in de `Dockerfile`); lokaal via
 `brew install ffmpeg`.
